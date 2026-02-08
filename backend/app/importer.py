@@ -98,6 +98,8 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
             
             # Run Wash Sale Detection
             if new_trades_list:
+                # Flush to get IDs
+                db.flush()
                 log.write("Running Wash Sale Detection...\n")
                 from . import wash_sales
                 wash_sales.detect_wash_sales(new_trades_list)

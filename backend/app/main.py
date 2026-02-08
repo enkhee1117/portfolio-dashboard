@@ -81,4 +81,15 @@ def create_trade(trade: schemas.TradeCreate, db: Session = Depends(get_db)):
     db.add(db_trade)
     db.commit()
     db.refresh(db_trade)
+    
+    # Run wash sale detection for this ticker
+    # We need to pass ALL trades for this ticker to the detector to be accurate
+    # or at least enough history. 
+    # Ideally, we should re-run for the specific ticker.
+    all_trades = db.query(models.Trade).filter(models.Trade.ticker == db_trade.ticker).all()
+    from . import wash_sales
+    wash_sales.detect_wash_sales(all_trades)
+    db.commit()
+    db.refresh(db_trade)
+    
     return db_trade
