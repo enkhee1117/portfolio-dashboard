@@ -26,6 +26,7 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
 
         try:
             new_trades_list = []
+            trades_added_count = 0
             # Try reading as CSV
             # We don't know which one it is, so we read a few lines
             with open(file_path, 'r', encoding='utf-8-sig', errors='replace') as f:
@@ -35,12 +36,20 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
             
             # Detect File Type
             if "Assets,Date,Ticker" in content_sample:
-                log.write("Detected Stock Trades.csv format - Clearing existing trades\n")
-                db.query(models.Trade).delete()
-                # db.commit() # Commit later
+                log.write("Detected Stock Trades.csv format - Using Smart Import (Deduplication)\n")
                 
-                # Header is likely line 2 (index 1), but let's be dynamic
-                # The line "Assets,Date,Ticker" is the header.
+                # Fetch existing trades to build signature set
+                # Signature: (Date, Ticker, Side, Price, Quantity)
+                existing_trades = db.query(models.Trade).all()
+                existing_signatures = set()
+                for t in existing_trades:
+                    # Normalize date to YYYY-MM-DD for comparison if needed, but datetime objects should compare fine 
+                    # provided pandas timestamp matches. 
+                    # Start with tuple.
+                    sig = (t.date, t.ticker, t.side, t.price, t.quantity)
+                    existing_signatures.add(sig)
+                
+                log.write(f"Loaded {len(existing_signatures)} existing trade signatures.\n")
                 
                 # Re-read with pandas
                 # Find header row index
@@ -52,23 +61,18 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
                 
                 df = pd.read_csv(file_path, header=header_row)
                 log.write(f"Columns: {df.columns.tolist()}\n")
+                log.write(f"Rows found: {len(df)}\n")
                 
                 for index, row in df.iterrows():
+                    # log.write(f"Processing row {index}: {row.get('Ticker', 'NaN')}\n")
                     if pd.isna(row.get('Ticker')):
                         continue
                         
                     try:
                         # Map columns
-                        # "Assets,Date,Ticker, Price ,Number of stocks, Bought , Bought Amount ,Total number bought,Total Amount bought,Sold,Sold Amount,Total Sold number of stocks,Total sold amount,Average sell price, Average buy price , Realized Profit , Current Amount"
-                        # Note spaces in column names
-                        
                         col_ticker = 'Ticker'
                         col_date = 'Date'
                         col_price = ' Price ' if ' Price ' in df.columns else 'Price'
-                        # Logic per user: 
-                        # "Number of stocks": Positive = Buy, Negative = Sell.
-                        # Ignore "Bought", "Sold", "Total..." columns.
-                        
                         col_qty = 'Number of stocks' if 'Number of stocks' in df.columns else 'Quantity' # Fallback
                         
                         ticker = str(row.get(col_ticker)).strip()
@@ -76,34 +80,51 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
                         price_val = clean_currency(row.get(col_price))
                         raw_qty = clean_currency(row.get(col_qty))
                         
+                        # log.write(f"Parsed: {ticker} {date_val} {price_val} {raw_qty}\n")
+
                         if raw_qty != 0:
                             side = 'Buy' if raw_qty > 0 else 'Sell'
                             quantity = abs(raw_qty)
                             
-                            trade_obj = models.Trade(
-                                date=date_val,
-                                ticker=ticker,
-                                type='Equity',
-                                side=side,
-                                price=price_val,
-                                quantity=quantity,
-                                currency='USD'
-                            )
-                            db.add(trade_obj)
-                            new_trades_list.append(trade_obj)
-                            log.write(f"Added {side} {ticker} {quantity}\n")
+                            # Create signature
+                            date_py = date_val.to_pydatetime() if not pd.isna(date_val) else None
+                            
+                            if date_py:
+                                sig = (date_py, ticker, side, price_val, quantity)
+                                
+                                if sig in existing_signatures:
+                                    continue
+                                
+                                # New trade
+                                trade_obj = models.Trade(
+                                    date=date_py,
+                                    ticker=ticker,
+                                    type='Equity',
+                                    side=side,
+                                    price=price_val,
+                                    quantity=quantity,
+                                    currency='USD'
+                                )
+                                db.add(trade_obj)
+                                new_trades_list.append(trade_obj)
+                                
+                                existing_signatures.add(sig)
+                                trades_added_count += 1
+                                log.write(f"Added {side} {ticker} {quantity}\n")
 
                     except Exception as e:
                         log.write(f"Error importing row {index}: {e}\n")
+                
+                log.write(f"Smart Import Complete: Added {trades_added_count} new trades.\n")
             
-            # Run Wash Sale Detection
-            if new_trades_list:
-                # Flush to get IDs
-                db.flush()
-                log.write("Running Wash Sale Detection...\n")
-                from . import wash_sales
-                wash_sales.detect_wash_sales(new_trades_list)
-                log.write("Wash Sale Detection Complete.\n")
+                # Run Wash Sale Detection (Nested inside the Stock Trades block)
+                if new_trades_list:
+                    # Flush to get IDs
+                    db.flush()
+                    log.write("Running Wash Sale Detection...\n")
+                    from . import wash_sales
+                    wash_sales.detect_wash_sales(new_trades_list)
+                    log.write("Wash Sale Detection Complete.\n")
 
             elif "Equity Portfolio" in content_sample or "Main,Stats" in content_sample or "Assets\tTicker" in content_sample:
                 log.write("Detected PortfolioSnapshot.csv format\n")
@@ -178,6 +199,8 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
                 log.write("Unknown file format\n")
                 
             db.commit()
+            
+            return {"added": trades_added_count}
             
         except Exception as e:
             log.write(f"Fatal error: {e}\n")

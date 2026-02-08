@@ -41,11 +41,12 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
         shutil.copyfileobj(file.file, file_object)
     
     try:
-        importer.import_data(db, file_location)
+        result = importer.import_data(db, file_location)
+        count = result.get("added", 0) if result else 0
     finally:
         os.remove(file_location)
         
-    return {"message": "Import successful"}
+    return {"message": f"Import successful. Added {count} new trades."}
 
 @app.get("/portfolio", response_model=list[schemas.PortfolioSnapshotBase]) # Schema needs to match dict or use ORM
 def get_portfolio(db: Session = Depends(get_db)):

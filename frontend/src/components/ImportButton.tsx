@@ -27,7 +27,8 @@ const ImportButton: React.FC<ImportButtonProps> = ({ onImportSuccess }) => {
             });
 
             if (res.ok) {
-                alert("Import successful!");
+                const data = await res.json();
+                alert(data.message || "Import successful!");
                 onImportSuccess();
             } else {
                 alert("Import failed.");
