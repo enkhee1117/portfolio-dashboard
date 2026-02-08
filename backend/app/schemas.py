@@ -15,6 +15,7 @@ class TradeBase(BaseModel):
     expiration_date: Optional[datetime] = None
     strike_price: Optional[float] = None
     option_type: Optional[str] = None # Call, Put
+    is_wash_sale: bool = False
 
 class TradeCreate(TradeBase):
     pass
@@ -34,6 +35,8 @@ class PortfolioSnapshotBase(BaseModel):
     market_value: float
     unrealized_pnl: float
     realized_pnl: float
+    primary_theme: Optional[str] = None
+    secondary_theme: Optional[str] = None
 
 class PortfolioSnapshot(PortfolioSnapshotBase):
     id: int

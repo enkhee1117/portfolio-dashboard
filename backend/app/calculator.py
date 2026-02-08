@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from . import models, schemas
 from collections import defaultdict
+from datetime import datetime
 
 def calculate_portfolio(db: Session):
     trades = db.query(models.Trade).all()
@@ -31,24 +32,37 @@ def calculate_portfolio(db: Session):
 
         # TODO: Add Option logic
 
-    # Fetch current prices
-    asset_prices = {p.ticker: p.price for p in db.query(models.AssetPrice).all()}
+    # Fetch current prices and themes
+    asset_data = {p.ticker: {'price': p.price, 'primary': p.primary_theme, 'secondary': p.secondary_theme} for p in db.query(models.AssetPrice).all()}
+    with open("debug_calc.log", "w") as f:
+        f.write(f"DEBUG: GOOG data from DB: {asset_data.get('GOOG')}\\n")
 
     # Save snapshots or return data
     results = []
     for ticker, data in positions.items():
         if data["quantity"] != 0 or data["realized_pnl"] != 0:
-            current_price = asset_prices.get(ticker, 0.0)
-            market_value = data["quantity"] * current_price
-            unrealized_pnl = (current_price - data["cost_basis"]) * data["quantity"] if current_price > 0 else 0.0
+            current_price = 0.0
+            p_theme = None
+            s_theme = None
             
+            if ticker in asset_data:
+                current_price = asset_data[ticker]['price']
+                p_theme = asset_data[ticker]['primary']
+                s_theme = asset_data[ticker]['secondary']
+                
+            market_val = data["quantity"] * current_price
+            unrealized = (current_price - data["cost_basis"]) * data["quantity"] if data["quantity"] != 0 else 0.0
+
             results.append({
                 "ticker": ticker,
                 "quantity": data["quantity"],
                 "average_price": data["cost_basis"],
-                "realized_pnl": data["realized_pnl"],
                 "current_price": current_price,
-                "market_value": market_value,
-                "unrealized_pnl": unrealized_pnl
+                "market_value": market_val,
+                "unrealized_pnl": unrealized,
+                "realized_pnl": data["realized_pnl"],
+                "date": datetime.utcnow(),
+                "primary_theme": p_theme,
+                "secondary_theme": s_theme
             })
     return results

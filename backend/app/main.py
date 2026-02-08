@@ -64,7 +64,9 @@ def get_portfolio(db: Session = Depends(get_db)):
             current_price=item["current_price"],
             market_value=item["market_value"],
             unrealized_pnl=item["unrealized_pnl"],
-            realized_pnl=item["realized_pnl"]
+            realized_pnl=item["realized_pnl"],
+            primary_theme=item.get("primary_theme"),
+            secondary_theme=item.get("secondary_theme")
         )
         for item in data
     ]

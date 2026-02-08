@@ -25,6 +25,7 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
             return float(val)
 
         try:
+            new_trades_list = []
             # Try reading as CSV
             # We don't know which one it is, so we read a few lines
             with open(file_path, 'r', encoding='utf-8-sig', errors='replace') as f:
@@ -79,7 +80,7 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
                             side = 'Buy' if raw_qty > 0 else 'Sell'
                             quantity = abs(raw_qty)
                             
-                            db.add(models.Trade(
+                            trade_obj = models.Trade(
                                 date=date_val,
                                 ticker=ticker,
                                 type='Equity',
@@ -87,31 +88,47 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
                                 price=price_val,
                                 quantity=quantity,
                                 currency='USD'
-                            ))
+                            )
+                            db.add(trade_obj)
+                            new_trades_list.append(trade_obj)
                             log.write(f"Added {side} {ticker} {quantity}\n")
 
                     except Exception as e:
                         log.write(f"Error importing row {index}: {e}\n")
+            
+            # Run Wash Sale Detection
+            if new_trades_list:
+                log.write("Running Wash Sale Detection...\n")
+                from . import wash_sales
+                wash_sales.detect_wash_sales(new_trades_list)
+                log.write("Wash Sale Detection Complete.\n")
 
-            elif "Equity Portfolio" in content_sample or "Main,Stats" in content_sample:
+            elif "Equity Portfolio" in content_sample or "Main,Stats" in content_sample or "Assets\tTicker" in content_sample:
                 log.write("Detected PortfolioSnapshot.csv format\n")
-                # Header is deeper. Look for "Assets,Ticker"
+                
+                # Determine separator
+                sep = ','
+                if "Assets\tTicker" in content_sample:
+                     sep = '\t'
+                     log.write("Using tab separator\n")
+
+                # Header is deeper. Look for "Assets" and "Ticker"
                 header_row = 0
                 for i, line in enumerate(first_lines):
-                    if "Assets,Ticker" in line:
+                    if "Assets" in line and "Ticker" in line:
                         header_row = i
                         break
                 
                 # If not found in first 20 lines, read more?
-                if header_row == 0 and "Assets,Ticker" not in content_sample:
+                if header_row == 0 and ("Assets" not in content_sample or "Ticker" not in content_sample):
                     with open(file_path, 'r', encoding='utf-8-sig', errors='replace') as f:
                         lines = f.readlines()
                         for i, line in enumerate(lines):
-                             if "Assets,Ticker" in line:
+                             if "Assets" in line and "Ticker" in line:
                                 header_row = i
                                 break
                 
-                df = pd.read_csv(file_path, header=header_row)
+                df = pd.read_csv(file_path, header=header_row, sep=sep)
                 log.write(f"Columns: {df.columns.tolist()}\n")
                 
                 # Pre-fetch existing prices to avoid duplicates and N+1 queries
@@ -125,16 +142,32 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
                         ticker = str(row.get('Ticker')).strip()
                         price_val = clean_currency(row.get('Price'))
                         
+                        # Extract themes (handle missing columns gracefully)
+                        p_theme = str(row.get('Primary theme', '')).strip() if 'Primary theme' in df.columns else None
+                        s_theme = str(row.get('Secondary theme', '')).strip() if 'Secondary theme' in df.columns else None
+                        
+                        # Maps empty strings to None if preferred, or keep as empty strings
+                        if p_theme == 'nan': p_theme = None
+                        if s_theme == 'nan': s_theme = None
+
                         if price_val > 0:
                             if ticker in price_cache:
                                 price_cache[ticker].price = price_val
+                                price_cache[ticker].primary_theme = p_theme
+                                price_cache[ticker].secondary_theme = s_theme
                                 price_cache[ticker].last_updated = datetime.utcnow()
-                                log.write(f"Updated price for {ticker}: {price_val}\n")
+                                log.write(f"Updated price/theme for {ticker}: {price_val}\n")
                             else:
-                                new_price = models.AssetPrice(ticker=ticker, price=price_val, last_updated=datetime.utcnow())
+                                new_price = models.AssetPrice(
+                                    ticker=ticker, 
+                                    price=price_val, 
+                                    primary_theme=p_theme, 
+                                    secondary_theme=s_theme,
+                                    last_updated=datetime.utcnow()
+                                )
                                 db.add(new_price)
                                 price_cache[ticker] = new_price
-                                log.write(f"Added price for {ticker}: {price_val}\n")
+                                log.write(f"Added price/theme for {ticker}: {price_val}\n")
 
                     except Exception as e:
                         log.write(f"Error importing snapshot price row {index}: {e}\n")

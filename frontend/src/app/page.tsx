@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import PositionTable from '../components/PositionTable';
 import ImportButton from '../components/ImportButton';
 import ManualTradeForm from '../components/ManualTradeForm';
+import ThemeAnalysis from '../components/ThemeAnalysis';
 import { PortfolioSnapshot } from './types';
 
 export default function Home() {
@@ -55,6 +56,9 @@ export default function Home() {
               {showManualTrade ? 'Hide Form' : 'Add Trade'}
             </button>
             <ImportButton onImportSuccess={fetchPortfolio} />
+            <a href="/trades" className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors">
+              History
+            </a>
           </div>
         </div>
 
@@ -83,6 +87,12 @@ export default function Home() {
         {showManualTrade && (
           <ManualTradeForm onTradeAdded={fetchPortfolio} />
         )}
+
+        {/* Theme Analysis */}
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold text-gray-200">Theme Exposure</h2>
+          <ThemeAnalysis positions={positions} />
+        </div>
 
         {/* Main Content */}
         <div className="space-y-4">

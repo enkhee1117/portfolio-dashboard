@@ -35,3 +35,8 @@ venv/
 # IDE
 .idea/
 .vscode/
+
+# Debugging
+import_debug.log
+debug_*.py
+debug_*.txt

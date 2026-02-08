@@ -19,14 +19,16 @@ class Trade(Base):
     expiration_date = Column(DateTime, nullable=True)
     strike_price = Column(Float, nullable=True)
     option_type = Column(String, nullable=True) # Call, Put
+    is_wash_sale = Column(Boolean, default=False)
 
 
 class AssetPrice(Base):
     __tablename__ = "asset_prices"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    ticker = Column(String, unique=True, index=True)
+
+    ticker = Column(String, primary_key=True, index=True)
     price = Column(Float)
+    primary_theme = Column(String, nullable=True)
+    secondary_theme = Column(String, nullable=True)
     last_updated = Column(DateTime, default=datetime.utcnow)
 
 class PortfolioSnapshot(Base):
