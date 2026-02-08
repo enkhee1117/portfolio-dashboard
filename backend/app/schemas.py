@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 
@@ -23,8 +23,7 @@ class TradeCreate(TradeBase):
 class Trade(TradeBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PortfolioSnapshotBase(BaseModel):
     date: datetime
@@ -41,5 +40,4 @@ class PortfolioSnapshotBase(BaseModel):
 class PortfolioSnapshot(PortfolioSnapshotBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

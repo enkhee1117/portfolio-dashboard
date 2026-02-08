@@ -77,7 +77,7 @@ def get_trades(db: Session = Depends(get_db)):
 
 @app.post("/trades/manual", response_model=schemas.Trade)
 def create_trade(trade: schemas.TradeCreate, db: Session = Depends(get_db)):
-    db_trade = models.Trade(**trade.dict())
+    db_trade = models.Trade(**trade.model_dump())
     db.add(db_trade)
     db.commit()
     db.refresh(db_trade)
