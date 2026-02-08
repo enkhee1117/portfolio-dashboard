@@ -64,50 +64,31 @@ def import_data(db: Session, file_path: str): # file_path is the uploaded file, 
                         col_ticker = 'Ticker'
                         col_date = 'Date'
                         col_price = ' Price ' if ' Price ' in df.columns else 'Price'
-                        col_bought = ' Bought ' if ' Bought ' in df.columns else 'Bought'
-                        col_sold = 'Sold' # Sold seems clean
+                        # Logic per user: 
+                        # "Number of stocks": Positive = Buy, Negative = Sell.
+                        # Ignore "Bought", "Sold", "Total..." columns.
                         
-                        # Logic:
-                        # If Bought > 0, it's a Buy
-                        # If Sold > 0, it's a Sell
-                        # This CSV might range per date?
-                        # Let's look at the example row:
-                        # EOG, 8-Apr-24, Bought 1.00, Sold 0.00.
-                        # This looks like transactions.
+                        col_qty = 'Number of stocks' if 'Number of stocks' in df.columns else 'Quantity' # Fallback
                         
                         ticker = str(row.get(col_ticker)).strip()
                         date_val = pd.to_datetime(row.get(col_date), errors='coerce')
                         price_val = clean_currency(row.get(col_price))
+                        raw_qty = clean_currency(row.get(col_qty))
                         
-                        bought_qty = clean_currency(row.get(col_bought))
-                        sold_qty = clean_currency(row.get(col_sold))
-                        
-                        if bought_qty > 0:
-                            db.add(models.Trade(
-                                date=date_val,
-                                ticker=ticker,
-                                type='Equity',
-                                side='Buy',
-                                price=price_val,
-                                quantity=bought_qty,
-                                currency='USD'
-                            ))
-                            log.write(f"Added Buy {ticker} {bought_qty}\n")
-                            
-                        if sold_qty != 0:
-                            # Sold column might be negative (e.g. -150)
-                            qty = abs(sold_qty)
+                        if raw_qty != 0:
+                            side = 'Buy' if raw_qty > 0 else 'Sell'
+                            quantity = abs(raw_qty)
                             
                             db.add(models.Trade(
                                 date=date_val,
                                 ticker=ticker,
                                 type='Equity',
-                                side='Sell',
+                                side=side,
                                 price=price_val,
-                                quantity=qty,
+                                quantity=quantity,
                                 currency='USD'
                             ))
-                            log.write(f"Added Sell {ticker} {qty}\n")
+                            log.write(f"Added {side} {ticker} {quantity}\n")
 
                     except Exception as e:
                         log.write(f"Error importing row {index}: {e}\n")
