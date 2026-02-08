@@ -26,7 +26,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
         e.preventDefault();
         setLoading(true);
         try {
-            const res = await fetch("http://localhost:8000/trades/manual", {
+            let res = await fetch("http://localhost:8000/trades/manual", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -35,6 +35,26 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
                     quantity: parseFloat(formData.quantity)
                 })
             });
+
+            if (res.status === 409) {
+                // Duplicate detected
+                if (confirm("This looks like a duplicate trade. Add it anyway?")) {
+                    // Retry with force=true
+                    res = await fetch("http://localhost:8000/trades/manual?force=true", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            ...formData,
+                            price: parseFloat(formData.price),
+                            quantity: parseFloat(formData.quantity)
+                        })
+                    });
+                } else {
+                    setLoading(false);
+                    return;
+                }
+            }
+
             if (res.ok) {
                 alert("Trade added successfully!");
                 onTradeAdded();
