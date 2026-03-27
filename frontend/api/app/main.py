@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
 from . import schemas, database, importer, calculator
+from google.cloud.firestore_v1.base_query import FieldFilter
 import os
 import shutil
 from datetime import datetime
@@ -83,7 +84,6 @@ def get_trades(db = Depends(get_db)):
 @app.post("/trades/manual", response_model=schemas.Trade)
 def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(get_db)):
     if not force:
-        from google.cloud.firestore_v1.base_query import FieldFilter
         trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker)).stream()
         for doc in trades_docs:
             d = doc.to_dict()
@@ -113,7 +113,6 @@ def delete_trade(trade_id: str, db = Depends(get_db)):
     ticker = doc.to_dict().get('ticker')
     doc_ref.delete()
     
-    from google.cloud.firestore_v1.base_query import FieldFilter
     trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker)).stream()
     all_trades = [parse_firestore_doc(d) for d in trades_docs]
         
@@ -133,7 +132,6 @@ def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)
     doc_ref.update(trade_data)
     
     from . import wash_sales
-    from google.cloud.firestore_v1.base_query import FieldFilter
 
     def re_run_ticker(ticker_name):
         tdocs = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker_name)).stream()

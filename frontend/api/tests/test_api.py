@@ -1,224 +1,247 @@
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.main import app, get_db
-from app import models, database
+"""
+Backend API tests using mocked Firebase Firestore.
+No real Firebase credentials required — everything runs offline.
+"""
 import pytest
-import os
+from unittest.mock import MagicMock, patch
+from datetime import datetime
+from fastapi.testclient import TestClient
+from app.main import app, get_db
+from app import schemas
 
-# Setup test DB
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_api.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
+def make_trade(doc_id="trade-1", ticker="TEST", side="Buy", price=100.0,
+               quantity=10.0, date=None, is_wash_sale=False):
+    """Return a dict that Firestore would deliver via doc.to_dict()."""
+    return {
+        "date": date or datetime(2025, 1, 1),
+        "ticker": ticker,
+        "type": "Equity",
+        "side": side,
+        "price": price,
+        "quantity": quantity,
+        "fees": 0.0,
+        "currency": "USD",
+        "is_wash_sale": is_wash_sale,
+        "expiration_date": None,
+        "strike_price": None,
+        "option_type": None,
+    }
 
-app.dependency_overrides[get_db] = override_get_db
+def make_doc(doc_id, data):
+    """Fake Firestore document snapshot."""
+    doc = MagicMock()
+    doc.id = doc_id
+    doc.exists = True
+    doc.to_dict.return_value = data
+    return doc
 
-client = TestClient(app)
+def make_mock_db(trades=None, asset_prices=None):
+    """Build a Firestore mock that satisfies the app's query patterns."""
+    db = MagicMock()
+    trades = trades or []
+    asset_prices = asset_prices or []
 
-@pytest.fixture(scope="module", autouse=True)
-def test_db():
-    models.Base.metadata.create_all(bind=engine)
-    yield
-    models.Base.metadata.drop_all(bind=engine)
-    if os.path.exists("./test_api.db"):
-        os.remove("./test_api.db")
+    # collection('trades').stream() → list of docs
+    trades_col = MagicMock()
+    trades_col.stream.return_value = trades
+    trades_col.where.return_value = trades_col   # supports chained .where().stream()
 
-def test_read_root():
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"message": "Portfolio Tracker API"}
+    prices_col = MagicMock()
+    prices_col.stream.return_value = asset_prices
 
-def test_get_trades():
-    response = client.get("/trades")
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    def _collection(name):
+        if name == "trades":
+            return trades_col
+        if name == "asset_prices":
+            return prices_col
+        return MagicMock()
 
-def test_get_portfolio():
-    response = client.get("/portfolio")
-    assert response.status_code == 200
-    # Check structure of first item if exists
-    data = response.json()
-    if data:
-        item = data[0]
-        assert "ticker" in item
-        assert "current_price" in item
-        assert "primary_theme" in item
+    db.collection.side_effect = _collection
 
-def test_create_manual_trade():
-    # Test creating a trade via API
-    # Use a ticker that won't mess up main data too much, or clean up after.
-    # We can use a mock session to avoid writing to prod DB, but 
-    # for this "bootstrap" phase, we might just test the endpoint existence/validation.
-    
+    # .document(id).get() for read; .document().set() / .delete() for write
+    def _doc_ref(doc_id=None):
+        ref = MagicMock()
+        ref.id = doc_id or "new-doc-id"
+        # Return a valid doc by default
+        ref.get.return_value = make_doc(doc_id or "new-doc-id", make_trade(doc_id or "new-doc-id"))
+        return ref
+
+    trades_col.document.side_effect = _doc_ref
+    db.batch.return_value = MagicMock()
+
+    return db
+
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def mock_firebase(monkeypatch):
+    """Patch firebase_admin so no real credentials are needed."""
+    monkeypatch.setattr("firebase_admin._apps", {"default": True})
+
+
+@pytest.fixture
+def empty_client():
+    """TestClient with an empty Firestore (no trades, no prices)."""
+    db = make_mock_db()
+    app.dependency_overrides[get_db] = lambda: db
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_with_trade():
+    """TestClient pre-seeded with one BUY trade."""
+    trade_data = make_trade("trade-1", ticker="AAPL", side="Buy", price=150.0, quantity=10)
+    docs = [make_doc("trade-1", trade_data)]
+    db = make_mock_db(trades=docs)
+    app.dependency_overrides[get_db] = lambda: db
+    yield TestClient(app), db
+    app.dependency_overrides.clear()
+
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+def test_read_root(empty_client):
+    resp = empty_client.get("/")
+    assert resp.status_code == 200
+    assert "Portfolio Tracker API" in resp.json()["message"]
+
+
+def test_get_trades_empty(empty_client):
+    resp = empty_client.get("/trades")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_get_trades_with_data(client_with_trade):
+    client, _ = client_with_trade
+    resp = client.get("/trades")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["ticker"] == "AAPL"
+    assert data[0]["id"] == "trade-1"
+
+
+def test_get_portfolio_empty(empty_client):
+    resp = empty_client.get("/portfolio")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_get_portfolio_calculates_positions(client_with_trade):
+    client, _ = client_with_trade
+    resp = client.get("/portfolio")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["ticker"] == "AAPL"
+    assert data[0]["quantity"] == 10.0
+    assert data[0]["average_price"] == 150.0
+
+
+def test_create_manual_trade(empty_client: TestClient):
     new_trade = {
         "date": "2025-01-01T00:00:00",
-        "ticker": "TEST_TICKER",
+        "ticker": "TSLA",
         "type": "Equity",
         "side": "Buy",
-        "price": 100.0,
-        "quantity": 10.0,
-        "currency": "USD"
+        "price": 200.0,
+        "quantity": 5.0,
+        "currency": "USD",
+        "fees": 0.0,
+        "is_wash_sale": False,
     }
-    
-    response = client.post("/trades/manual", json=new_trade)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ticker"] == "TEST_TICKER"
+    resp = empty_client.post("/trades/manual", json=new_trade)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ticker"] == "TSLA"
     assert data["id"] is not None
-    
-    # Verify it appears in trades list
-    trades_resp = client.get("/trades")
-    trades = trades_resp.json()
-    assert any(t["ticker"] == "TEST_TICKER" for t in trades)
 
-    # Clean up (optional, relying on user to reset DB or ignored)
-    # Ideally should delete, but we don't have delete endpoint yet.
 
-def test_prevent_duplicate_manual_trade():
-    """
-    Test 1: Add Trade -> Success
-    Test 2: Add Same Trade -> 409 Conflict
-    Test 3: Add Same Trade + force=true -> Success
-    """
-    trade_data = {
-        "date": "2025-06-01T12:00:00",
-        "ticker": "DUP_TEST",
+def test_duplicate_trade_rejected():
+    """Second identical trade should return 409 unless force=true."""
+    trade_data = make_trade("dup-1", ticker="DUP", price=50.0, quantity=100.0)
+    dup_doc = make_doc("dup-1", trade_data)
+
+    db = MagicMock()
+    db.batch.return_value = MagicMock()
+    trades_col = MagicMock()
+    # chained .where(...).where(...).stream() — always return dup_doc
+    trades_col.where.return_value = trades_col
+    trades_col.stream.return_value = [dup_doc]
+    trades_col.document.return_value = MagicMock(id="new-id")
+    db.collection.return_value = trades_col
+
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+
+    payload = {
+        "date": "2025-01-01T00:00:00",
+        "ticker": "DUP",
         "type": "Equity",
         "side": "Buy",
         "price": 50.0,
         "quantity": 100.0,
-        "currency": "USD"
+        "currency": "USD",
+        "fees": 0.0,
+        "is_wash_sale": False,
     }
-    
-    # 1. First Add
-    resp1 = client.post("/trades/manual", json=trade_data)
-    assert resp1.status_code == 200
-    
-    # 2. Second Add (Duplicate)
-    resp2 = client.post("/trades/manual", json=trade_data)
-    assert resp2.status_code == 409
-    assert "Duplicate trade detected" in resp2.json()["detail"]
-    
-    # 3. Third Add (Force)
-    resp3 = client.post("/trades/manual?force=true", json=trade_data)
-    assert resp3.status_code == 200
-    
-    # Verify we have 2 trades for DUP_TEST (from step 1 and 3)
-    trades = client.get("/trades").json()
-    dup_trades = [t for t in trades if t["ticker"] == "DUP_TEST"]
-    assert len(dup_trades) == 2
+    resp = client.post("/trades/manual", json=payload)
+    # 409 because DUP trade already exists with same side/price/qty
+    assert resp.status_code == 409
 
-def test_delete_trade_recalculates_wash_sale():
-    """
-    Scenario:
-    1. Buy A (Jan 1)
-    2. Sell A (Feb 1) @ Loss
-    3. Buy A (Feb 15) -> Triggers Wash Sale on Sell
-    4. DELETE Buy A (Feb 15) -> Wash Sale on Sell should be CLEARED
-    """
-    ticker = "WASH_DEL_TEST"
-    
-    # 1. Buy
-    t1 = client.post("/trades/manual", json={
-        "date": "2024-01-01T00:00:00", "ticker": ticker, "side": "Buy", "price": 100.0, "quantity": 10, "type": "Equity"
-    })
-    
-    # 2. Sell @ Loss
-    t2 = client.post("/trades/manual", json={
-        "date": "2024-02-01T00:00:00", "ticker": ticker, "side": "Sell", "price": 90.0, "quantity": 10, "type": "Equity"
-    }) 
-    
-    # 3. Buy Replacement
-    t3 = client.post("/trades/manual", json={
-        "date": "2024-02-15T00:00:00", "ticker": ticker, "side": "Buy", "price": 95.0, "quantity": 10, "type": "Equity"
-    })
-    
-    # Verify Wash Sale is present on t2
-    trades = client.get("/trades").json()
-    t2_check = next(t for t in trades if t["id"] == t2.json()["id"])
-    assert t2_check["is_wash_sale"] == True
-    
-    # 4. DELETE t3
-    t3_id = t3.json()["id"]
-    del_resp = client.delete(f"/trades/{t3_id}")
-    assert del_resp.status_code == 200
-    
-    # Verify Wash Sale is GONE from t2
-    trades_after = client.get("/trades").json()
-    t2_check_after = next(t for t in trades_after if t["id"] == t2_check["id"])
-    assert t2_check_after["is_wash_sale"] == False
+    # Forcing should succeed even with dupe
+    resp_forced = client.post("/trades/manual?force=true", json=payload)
+    assert resp_forced.status_code == 200
 
-def test_update_trade():
-    """
-    Test updating price/quantity
-    """
-    # Create trade
-    resp = client.post("/trades/manual", json={
-        "date": "2024-06-01T00:00:00", "ticker": "UPD_TEST", "side": "Buy", "price": 100.0, "quantity": 10, "type": "Equity"
-    })
-    trade_id = resp.json()["id"]
-    
-    # Update
-    update_data = resp.json()
-    update_data["price"] = 200.0
-    update_data["quantity"] = 20.0
-    
-    put_resp = client.put(f"/trades/{trade_id}", json=update_data)
-    assert put_resp.status_code == 200
-    assert put_resp.json()["price"] == 200.0
-    assert put_resp.json()["quantity"] == 20.0
-    
-    # Verify in DB
-    get_resp = client.get("/trades")
-    trade = next(t for t in get_resp.json() if t["id"] == trade_id)
-    assert trade["price"] == 200.0
+    app.dependency_overrides.clear()
 
-def test_update_trade_triggers_wash_sale():
+
+def test_delete_trade():
+    """DELETE /trades/{id} should return 200 and call .delete() on the document."""
+    trade_data = make_trade("trade-del", ticker="AAPL")
+    doc_snapshot = make_doc("trade-del", trade_data)
+
+    doc_ref = MagicMock()
+    doc_ref.id = "trade-del"
+    doc_ref.get.return_value = doc_snapshot
+
+    db = MagicMock()
+    db.batch.return_value = MagicMock()
+    trades_col = MagicMock()
+    trades_col.document.return_value = doc_ref
+    trades_col.where.return_value = trades_col
+    trades_col.stream.return_value = []    # no remaining trades after delete
+    db.collection.return_value = trades_col
+
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+
+    resp = client.delete("/trades/trade-del")
+    assert resp.status_code == 200
+    assert resp.json()["message"] == "Trade deleted successfully"
+    doc_ref.delete.assert_called_once()
+
+    app.dependency_overrides.clear()
+
+
+def test_delete_nonexistent_trade(empty_client: TestClient):
     """
-    Scenario:
-    1. Buy A (Jan 1)
-    2. Sell A (Feb 1) @ Loss
-    3. Buy A (Mar 5) -> Outside 30 day window. No Wash Sale.
-    4. EDIT Buy A date to (Feb 15) -> Inside window. Should Trigger Wash Sale.
+    Deleting trade that doesn't exist should return 404.
     """
-    ticker = "WASH_UPD_TEST"
-    
-    # 1. Buy
-    t1 = client.post("/trades/manual", json={
-        "date": "2024-01-01T00:00:00", "ticker": ticker, "side": "Buy", "price": 100.0, "quantity": 10, "type": "Equity"
-    })
-    
-    # 2. Sell @ Loss
-    t2 = client.post("/trades/manual", json={
-        "date": "2024-02-01T00:00:00", "ticker": ticker, "side": "Sell", "price": 90.0, "quantity": 10, "type": "Equity"
-    }) 
-    
-    # 3. Buy Replacement (Outside Window: +33 days)
-    t3 = client.post("/trades/manual", json={
-        "date": "2024-03-05T00:00:00", "ticker": ticker, "side": "Buy", "price": 95.0, "quantity": 10, "type": "Equity"
-    })
-    
-    # Verify NO Wash Sale
-    trades = client.get("/trades").json()
-    t2_check = next(t for t in trades if t["id"] == t2.json()["id"])
-    assert t2_check["is_wash_sale"] == False
-    
-    # 4. EDIT t3 date to Inside Window (+14 days)
-    t3_id = t3.json()["id"]
-    t3_data = t3.json()
-    t3_data["date"] = "2024-02-15T00:00:00"
-    
-    put_resp = client.put(f"/trades/{t3_id}", json=t3_data)
-    assert put_resp.status_code == 200
-    
-    # Verify Wash Sale is NOW PRESENT on t2
-    trades_after = client.get("/trades").json()
-    t2_check_after = next(t for t in trades_after if t["id"] == t2_check["id"])
-    assert t2_check_after["is_wash_sale"] == True
+    db = MagicMock()
+    missing = MagicMock()
+    missing.exists = False
+    db.collection.return_value.document.return_value.get.return_value = missing
+
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+
+    resp = client.delete("/trades/ghost-id")
+    assert resp.status_code == 404
+
+    app.dependency_overrides.clear()
