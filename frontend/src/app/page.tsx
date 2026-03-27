@@ -15,7 +15,7 @@ export default function Home() {
   const fetchPortfolio = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/portfolio');
+      const res = await fetch('/api/portfolio');
       if (res.ok) {
         const data = await res.json();
         setPositions(data);

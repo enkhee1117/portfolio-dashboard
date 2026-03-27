@@ -14,7 +14,7 @@ export default function TradeHistory() {
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
     useEffect(() => {
-        fetch('http://localhost:8000/trades')
+        fetch('/api/trades')
             .then(res => res.json())
             .then(data => {
                 setTrades(data);
@@ -66,7 +66,7 @@ export default function TradeHistory() {
         if (!confirm("Are you sure you want to delete this trade?")) return;
 
         try {
-            const res = await fetch(`http://localhost:8000/trades/${id}`, { method: 'DELETE' });
+            const res = await fetch(`/api/trades/${id}`, { method: 'DELETE' });
             if (res.ok) {
                 setTrades(trades.filter(t => t.id !== id));
             } else {
@@ -87,7 +87,7 @@ export default function TradeHistory() {
         if (!editingTrade) return;
 
         try {
-            const res = await fetch(`http://localhost:8000/trades/${editingTrade.id}`, {
+            const res = await fetch(`/api/trades/${editingTrade.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

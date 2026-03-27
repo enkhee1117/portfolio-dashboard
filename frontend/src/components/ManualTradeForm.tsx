@@ -26,7 +26,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
         e.preventDefault();
         setLoading(true);
         try {
-            let res = await fetch("http://localhost:8000/trades/manual", {
+            let res = await fetch("/api/trades/manual", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -40,7 +40,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
                 // Duplicate detected
                 if (confirm("This looks like a duplicate trade. Add it anyway?")) {
                     // Retry with force=true
-                    res = await fetch("http://localhost:8000/trades/manual?force=true", {
+                    res = await fetch("/api/trades/manual?force=true", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({

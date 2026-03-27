@@ -3,7 +3,7 @@ import { useState } from 'react';
 
 const FileConfig = {
     accept: ".xlsx, .xls, .csv",
-    endpoint: "http://localhost:8000/import"
+    endpoint: "/api/import"
 };
 
 interface ImportButtonProps {
