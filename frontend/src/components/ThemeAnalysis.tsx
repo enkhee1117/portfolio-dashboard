@@ -46,14 +46,14 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
                             outerRadius={100}
                             fill="#8884d8"
                             dataKey="value"
-                            label={({ name, percent }: { name: string, percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                            label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`}
                         >
                             {themeData.map((entry, index) => (
                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                             ))}
                         </Pie>
                         <Tooltip
-                            formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Market Value']}
+                            formatter={(value: any) => [`$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Market Value']}
                             contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#f3f4f6' }}
                         />
                         <Legend />
