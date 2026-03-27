@@ -1,10 +1,11 @@
-from sqlalchemy.orm import Session
-from . import models, schemas
+from . import schemas
 from collections import defaultdict
 from datetime import datetime
 
-def calculate_portfolio(db: Session):
-    trades = db.query(models.Trade).all()
+def calculate_portfolio(db):
+    trades_docs = db.collection('trades').stream()
+    trades = [schemas.Trade(id=doc.id, **doc.to_dict()) for doc in trades_docs]
+    
     positions = defaultdict(lambda: {"quantity": 0, "cost_basis": 0.0, "realized_pnl": 0.0})
 
     for trade in trades:
@@ -14,30 +15,30 @@ def calculate_portfolio(db: Session):
             price = trade.price
             
             if trade.side == 'Buy':
-                # Update weighted average cost
                 current_qty = positions[ticker]["quantity"]
                 current_cost = positions[ticker]["cost_basis"]
-                
                 new_qty = current_qty + qty
                 if new_qty > 0:
                     positions[ticker]["cost_basis"] = ((current_qty * current_cost) + (qty * price)) / new_qty
                 positions[ticker]["quantity"] = new_qty
                 
             elif trade.side == 'Sell':
-                # Calculating Realized P&L
                 avg_cost = positions[ticker]["cost_basis"]
                 pnl = (price - avg_cost) * qty
                 positions[ticker]["realized_pnl"] += pnl
                 positions[ticker]["quantity"] -= qty
 
-        # TODO: Add Option logic
-
     # Fetch current prices and themes
-    asset_data = {p.ticker: {'price': p.price, 'primary': p.primary_theme, 'secondary': p.secondary_theme} for p in db.query(models.AssetPrice).all()}
-    with open("debug_calc.log", "w") as f:
-        f.write(f"DEBUG: GOOG data from DB: {asset_data.get('GOOG')}\\n")
+    price_docs = db.collection('asset_prices').stream()
+    asset_data = {}
+    for doc in price_docs:
+        d = doc.to_dict()
+        asset_data[d.get('ticker')] = {
+            'price': d.get('price', 0.0), 
+            'primary': d.get('primary_theme'), 
+            'secondary': d.get('secondary_theme')
+        }
 
-    # Save snapshots or return data
     results = []
     for ticker, data in positions.items():
         if data["quantity"] != 0 or data["realized_pnl"] != 0:
@@ -61,7 +62,7 @@ def calculate_portfolio(db: Session):
                 "market_value": market_val,
                 "unrealized_pnl": unrealized,
                 "realized_pnl": data["realized_pnl"],
-                "date": datetime.utcnow(),
+                "date": datetime.utcnow().replace(tzinfo=None), # Keep naive datetime for pydantic
                 "primary_theme": p_theme,
                 "secondary_theme": s_theme
             })

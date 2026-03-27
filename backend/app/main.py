@@ -1,20 +1,13 @@
-from fastapi import FastAPI, Depends, UploadFile, File
-from sqlalchemy.orm import Session
-from . import models, schemas, database, importer, calculator
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
+from . import schemas, database, importer, calculator
 import os
 import shutil
-
-# Create tables
-models.Base.metadata.create_all(bind=database.engine)
+from datetime import datetime
 
 app = FastAPI()
 
 from fastapi.middleware.cors import CORSMiddleware
-
-origins = [
-    "http://localhost:3000",
-]
-
+origins = ["http://localhost:3000", "*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -24,18 +17,14 @@ app.add_middleware(
 )
 
 def get_db():
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    return database.get_db()
 
 @app.get("/")
 def read_root():
-    return {"message": "Portfolio Tracker API"}
+    return {"message": "Portfolio Tracker API (Firebase Edition)"}
 
 @app.post("/import")
-async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_excel(file: UploadFile = File(...), db = Depends(get_db)):
     file_location = f"temp_{file.filename}"
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(file.file, file_object)
@@ -44,131 +33,103 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
         result = importer.import_data(db, file_location)
         count = result.get("added", 0) if result else 0
     finally:
-        os.remove(file_location)
+        if os.path.exists(file_location):
+            os.remove(file_location)
         
     return {"message": f"Import successful. Added {count} new trades."}
 
-@app.get("/portfolio", response_model=list[schemas.PortfolioSnapshotBase]) # Schema needs to match dict or use ORM
-def get_portfolio(db: Session = Depends(get_db)):
-    # Calculate on the fly for now
+@app.get("/portfolio", response_model=list[schemas.PortfolioSnapshot])
+def get_portfolio(db = Depends(get_db)):
     data = calculator.calculate_portfolio(db)
-    # create default date
-    from datetime import datetime
-    
-    # Map dictionary to schema
-    return [
-        schemas.PortfolioSnapshotBase(
-            date=datetime.utcnow(),
-            ticker=item["ticker"],
-            quantity=item["quantity"],
-            average_price=item["average_price"],
-            current_price=item["current_price"],
-            market_value=item["market_value"],
-            unrealized_pnl=item["unrealized_pnl"],
-            realized_pnl=item["realized_pnl"],
-            primary_theme=item.get("primary_theme"),
-            secondary_theme=item.get("secondary_theme")
-        )
-        for item in data
-    ]
+    portfolios = []
+    for i, item in enumerate(data):
+        item['id'] = str(i)
+        portfolios.append(schemas.PortfolioSnapshot(**item))
+    return portfolios
+
+def parse_firestore_doc(doc) -> schemas.Trade:
+    d = doc.to_dict()
+    d['id'] = doc.id
+    if 'date' in d and hasattr(d['date'], 'replace'):
+        d['date'] = d['date'].replace(tzinfo=None)
+    else:
+        # Just in case timestamp isn't loaded correctly fallback to dict value if it's already string/naive
+        pass
+    return schemas.Trade(**d)
 
 @app.get("/trades", response_model=list[schemas.Trade])
-def get_trades(db: Session = Depends(get_db)):
-    return db.query(models.Trade).order_by(models.Trade.date.desc()).all()
+def get_trades(db = Depends(get_db)):
+    docs = db.collection('trades').stream()
+    result = [parse_firestore_doc(d) for d in docs]
+    result.sort(key=lambda x: x.date, reverse=True)
+    return result
 
 @app.post("/trades/manual", response_model=schemas.Trade)
-def create_trade(trade: schemas.TradeCreate, force: bool = False, db: Session = Depends(get_db)):
-    # 1. Check for duplicates
-    # We check if there is an existing trade with same:
-    # Date, Ticker, Side, Price, Quantity
-    # Note: Dates might need careful comparison (timezone etc). 
-    # Provided trade.date is naive or consistent with DB.
-    
+def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(get_db)):
     if not force:
-        existing = db.query(models.Trade).filter(
-            models.Trade.ticker == trade.ticker,
-            models.Trade.side == trade.side,
-            models.Trade.price == trade.price,
-            models.Trade.quantity == trade.quantity
-            # Date comparison can be tricky with exact timestamps. 
-            # We'll check if absolute difference is small or exact match.
-            # For now, exact match on the day/time provided.
-        ).all()
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker)).stream()
+        for doc in trades_docs:
+            d = doc.to_dict()
+            if d.get('side') == trade.side and d.get('price') == trade.price and d.get('quantity') == trade.quantity:
+                raise HTTPException(status_code=409, detail="Duplicate trade detected.")
+                
+    trade_data = trade.model_dump()
+    doc_ref = db.collection('trades').document()
+    doc_ref.set(trade_data)
+    
+    trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker)).stream()
+    all_trades = [parse_firestore_doc(d) for d in trades_docs]
         
-        for t in existing:
-            # Compare dates
-            # If trade.date matches t.date exactly?
-            if t.date == trade.date:
-                 from fastapi import HTTPException
-                 raise HTTPException(status_code=409, detail="Duplicate trade detected. Use force=true to proceed.")
-
-    db_trade = models.Trade(**trade.model_dump())
-    db.add(db_trade)
-    db.commit()
-    db.refresh(db_trade)
-    
-    # Run wash sale detection for this ticker
-    # We need to pass ALL trades for this ticker to the detector to be accurate
-    # or at least enough history. 
-    # Ideally, we should re-run for the specific ticker.
-    all_trades = db.query(models.Trade).filter(models.Trade.ticker == db_trade.ticker).all()
     from . import wash_sales
-    wash_sales.detect_wash_sales(all_trades)
-    db.commit()
-    db.refresh(db_trade)
-    db.commit()
-    db.refresh(db_trade)
+    wash_sales.detect_wash_sales(all_trades, db)
     
-    return db_trade
+    trade_data['id'] = doc_ref.id
+    return schemas.Trade(**trade_data)
 
 @app.delete("/trades/{trade_id}")
-def delete_trade(trade_id: int, db: Session = Depends(get_db)):
-    base_query = db.query(models.Trade).filter(models.Trade.id == trade_id)
-    db_trade = base_query.first()
-    if not db_trade:
-        from fastapi import HTTPException
+def delete_trade(trade_id: str, db = Depends(get_db)):
+    doc_ref = db.collection('trades').document(trade_id)
+    doc = doc_ref.get()
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Trade not found")
+        
+    ticker = doc.to_dict().get('ticker')
+    doc_ref.delete()
     
-    ticker = db_trade.ticker
-    base_query.delete(synchronize_session=False)
-    db.commit()
-    
-    # Re-run wash sale for the affected ticker
-    all_trades = db.query(models.Trade).filter(models.Trade.ticker == ticker).all()
+    from google.cloud.firestore_v1.base_query import FieldFilter
+    trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker)).stream()
+    all_trades = [parse_firestore_doc(d) for d in trades_docs]
+        
     from . import wash_sales
-    wash_sales.detect_wash_sales(all_trades)
-    db.commit()
-    
+    wash_sales.detect_wash_sales(all_trades, db)
     return {"message": "Trade deleted successfully"}
 
 @app.put("/trades/{trade_id}", response_model=schemas.Trade)
-def update_trade(trade_id: int, trade: schemas.TradeCreate, db: Session = Depends(get_db)):
-    db_query = db.query(models.Trade).filter(models.Trade.id == trade_id)
-    db_trade = db_query.first()
-    if not db_trade:
-        from fastapi import HTTPException
+def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)):
+    doc_ref = db.collection('trades').document(trade_id)
+    doc = doc_ref.get()
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Trade not found")
+        
+    old_ticker = doc.to_dict().get('ticker')
+    trade_data = trade.model_dump()
+    doc_ref.update(trade_data)
     
-    old_ticker = db_trade.ticker
-    
-    # Update fields
-    update_data = trade.model_dump()
-    db_query.update(update_data, synchronize_session=False)
-    db.commit()
-    db.refresh(db_trade)
-    
-    # Re-run wash sales
-    # 1. For old ticker (if changed)
-    if old_ticker != db_trade.ticker:
-         all_trades_old = db.query(models.Trade).filter(models.Trade.ticker == old_ticker).all()
-         from . import wash_sales
-         wash_sales.detect_wash_sales(all_trades_old)
-    
-    # 2. For new/current ticker
-    all_trades_new = db.query(models.Trade).filter(models.Trade.ticker == db_trade.ticker).all()
     from . import wash_sales
-    wash_sales.detect_wash_sales(all_trades_new)
+    from google.cloud.firestore_v1.base_query import FieldFilter
+
+    def re_run_ticker(ticker_name):
+        tdocs = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker_name)).stream()
+        trlist = [parse_firestore_doc(d) for d in tdocs]
+        wash_sales.detect_wash_sales(trlist, db)
+
+    if old_ticker and old_ticker != trade.ticker:
+        re_run_ticker(old_ticker)
+        
+    re_run_ticker(trade.ticker)
     
-    db.commit()
-    db.refresh(db_trade)
-    return db_trade
+    trade_data['id'] = trade_id
+    if hasattr(trade_data['date'], 'replace'):
+        trade_data['date'] = trade_data['date'].replace(tzinfo=None)
+    return schemas.Trade(**trade_data)

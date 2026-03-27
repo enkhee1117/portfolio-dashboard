@@ -62,7 +62,7 @@ export default function TradeHistory() {
     const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
 
     // Handlers
-    const handleDelete = async (id: number) => {
+    const handleDelete = async (id: string) => {
         if (!confirm("Are you sure you want to delete this trade?")) return;
 
         try {

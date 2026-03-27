@@ -21,7 +21,7 @@ class TradeCreate(TradeBase):
     pass
 
 class Trade(TradeBase):
-    id: int
+    id: str
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -38,6 +38,7 @@ class PortfolioSnapshotBase(BaseModel):
     secondary_theme: Optional[str] = None
 
 class PortfolioSnapshot(PortfolioSnapshotBase):
-    id: int
+    id: str
 
     model_config = ConfigDict(from_attributes=True)
+
