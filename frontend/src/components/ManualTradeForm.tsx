@@ -204,18 +204,6 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Type</label>
-            <select
-              name="type"
-              value={formData.type}
-              onChange={handleChange}
-              className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
-            >
-              <option value="Equity">Equity</option>
-              <option value="Option">Option</option>
-            </select>
-          </div>
-          <div>
             <label className="block text-xs text-gray-400 mb-1">Quantity</label>
             <input
               type="number"
