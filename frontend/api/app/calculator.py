@@ -4,16 +4,26 @@ from datetime import datetime
 
 def calculate_portfolio(db):
     trades_docs = db.collection('trades').stream()
-    trades = [schemas.Trade(id=doc.id, **doc.to_dict()) for doc in trades_docs]
-    
-    positions = defaultdict(lambda: {"quantity": 0, "cost_basis": 0.0, "realized_pnl": 0.0})
+    trades = []
+    for doc in trades_docs:
+        d = doc.to_dict()
+        # Normalize timezone-aware dates to naive
+        if 'date' in d and hasattr(d['date'], 'replace'):
+            d['date'] = d['date'].replace(tzinfo=None)
+        d['id'] = doc.id
+        trades.append(schemas.Trade(**d))
+
+    # CRITICAL: sort by date so weighted average cost basis is calculated correctly
+    trades.sort(key=lambda t: t.date)
+
+    positions = defaultdict(lambda: {"quantity": 0.0, "cost_basis": 0.0, "realized_pnl": 0.0})
 
     for trade in trades:
         ticker = trade.ticker
         if trade.type == 'Equity':
             qty = trade.quantity
             price = trade.price
-            
+
             if trade.side == 'Buy':
                 current_qty = positions[ticker]["quantity"]
                 current_cost = positions[ticker]["cost_basis"]
@@ -21,12 +31,17 @@ def calculate_portfolio(db):
                 if new_qty > 0:
                     positions[ticker]["cost_basis"] = ((current_qty * current_cost) + (qty * price)) / new_qty
                 positions[ticker]["quantity"] = new_qty
-                
+
             elif trade.side == 'Sell':
                 avg_cost = positions[ticker]["cost_basis"]
                 pnl = (price - avg_cost) * qty
                 positions[ticker]["realized_pnl"] += pnl
                 positions[ticker]["quantity"] -= qty
+
+                # Reset cost basis when position is fully closed to avoid stale values
+                if abs(positions[ticker]["quantity"]) < 0.0001:
+                    positions[ticker]["quantity"] = 0.0
+                    positions[ticker]["cost_basis"] = 0.0
 
     # Fetch current prices and themes
     price_docs = db.collection('asset_prices').stream()
@@ -34,35 +49,35 @@ def calculate_portfolio(db):
     for doc in price_docs:
         d = doc.to_dict()
         asset_data[d.get('ticker')] = {
-            'price': d.get('price', 0.0), 
-            'primary': d.get('primary_theme'), 
+            'price': d.get('price', 0.0),
+            'primary': d.get('primary_theme'),
             'secondary': d.get('secondary_theme')
         }
 
     results = []
     for ticker, data in positions.items():
-        if data["quantity"] != 0 or data["realized_pnl"] != 0:
+        if abs(data["quantity"]) > 0.0001 or abs(data["realized_pnl"]) > 0.001:
             current_price = 0.0
             p_theme = None
             s_theme = None
-            
+
             if ticker in asset_data:
                 current_price = asset_data[ticker]['price']
                 p_theme = asset_data[ticker]['primary']
                 s_theme = asset_data[ticker]['secondary']
-                
+
             market_val = data["quantity"] * current_price
-            unrealized = (current_price - data["cost_basis"]) * data["quantity"] if data["quantity"] != 0 else 0.0
+            unrealized = (current_price - data["cost_basis"]) * data["quantity"] if abs(data["quantity"]) > 0.0001 else 0.0
 
             results.append({
                 "ticker": ticker,
                 "quantity": data["quantity"],
-                "average_price": data["cost_basis"],
+                "average_price": round(data["cost_basis"], 4),
                 "current_price": current_price,
-                "market_value": market_val,
-                "unrealized_pnl": unrealized,
-                "realized_pnl": data["realized_pnl"],
-                "date": datetime.utcnow().replace(tzinfo=None), # Keep naive datetime for pydantic
+                "market_value": round(market_val, 2),
+                "unrealized_pnl": round(unrealized, 2),
+                "realized_pnl": round(data["realized_pnl"], 2),
+                "date": datetime.utcnow().replace(tzinfo=None),
                 "primary_theme": p_theme,
                 "secondary_theme": s_theme
             })
