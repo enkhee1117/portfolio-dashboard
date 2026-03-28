@@ -1,97 +1,313 @@
 "use client";
-import { useState } from 'react';
-import { Trade } from '../app/types';
+import { useState, useEffect } from "react";
+import { Asset, ThemeLists } from "../app/types";
 
 interface ManualTradeFormProps {
-    onTradeAdded: () => void;
+  onTradeAdded: () => void;
 }
 
 const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
-    const [formData, setFormData] = useState({
-        date: new Date().toISOString().split('T')[0],
-        ticker: '',
-        type: 'Equity',
-        side: 'Buy',
-        price: '',
-        quantity: '',
-        currency: 'USD'
-    });
-    const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    date: new Date().toISOString().split("T")[0],
+    ticker: "",
+    type: "Equity",
+    side: "Buy",
+    price: "",
+    quantity: "",
+    currency: "USD",
+  });
+  const [loading, setLoading] = useState(false);
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value });
-    };
+  // Asset registration state
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [themes, setThemes] = useState<ThemeLists>({ primary: [], secondary: [] });
+  const [tickerStatus, setTickerStatus] = useState<"idle" | "registered" | "unregistered">("idle");
+  const [showRegister, setShowRegister] = useState(false);
+  const [regForm, setRegForm] = useState({ primary_theme: "", secondary_theme: "", price: "" });
+  const [regLoading, setRegLoading] = useState(false);
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setLoading(true);
-        try {
-            let res = await fetch("/api/trades/manual", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    ...formData,
-                    price: parseFloat(formData.price),
-                    quantity: parseFloat(formData.quantity)
-                })
-            });
+  // Fetch assets and themes on mount
+  useEffect(() => {
+    Promise.all([fetch("/api/assets"), fetch("/api/assets/themes")])
+      .then(async ([aRes, tRes]) => {
+        if (aRes.ok) setAssets(await aRes.json());
+        if (tRes.ok) setThemes(await tRes.json());
+      })
+      .catch(console.error);
+  }, []);
 
-            if (res.status === 409) {
-                // Duplicate detected
-                if (confirm("This looks like a duplicate trade. Add it anyway?")) {
-                    // Retry with force=true
-                    res = await fetch("/api/trades/manual?force=true", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            ...formData,
-                            price: parseFloat(formData.price),
-                            quantity: parseFloat(formData.quantity)
-                        })
-                    });
-                } else {
-                    setLoading(false);
-                    return;
-                }
-            }
+  // Check ticker when it changes
+  const checkTicker = (ticker: string) => {
+    if (!ticker.trim()) {
+      setTickerStatus("idle");
+      setShowRegister(false);
+      return;
+    }
+    const upper = ticker.toUpperCase();
+    const found = assets.some((a) => a.ticker === upper);
+    setTickerStatus(found ? "registered" : "unregistered");
+    setShowRegister(!found);
+  };
 
-            if (res.ok) {
-                alert("Trade added successfully!");
-                onTradeAdded();
-                setFormData({ ...formData, ticker: '', price: '', quantity: '' });
-            } else {
-                alert("Failed to add trade.");
-            }
-        } catch (err) {
-            console.error(err);
-            alert("Error adding trade.");
-        } finally {
-            setLoading(false);
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
+    if (name === "ticker") {
+      checkTicker(value);
+    }
+  };
+
+  // Register the new asset inline
+  const handleRegister = async () => {
+    const ticker = formData.ticker.toUpperCase();
+    if (!regForm.primary_theme || !regForm.secondary_theme) {
+      alert("Both themes are required.");
+      return;
+    }
+    setRegLoading(true);
+    try {
+      const res = await fetch("/api/assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticker,
+          primary_theme: regForm.primary_theme,
+          secondary_theme: regForm.secondary_theme,
+          price: parseFloat(regForm.price) || 0,
+        }),
+      });
+      if (res.ok) {
+        const newAsset = await res.json();
+        setAssets([...assets, newAsset]);
+        setTickerStatus("registered");
+        setShowRegister(false);
+        setRegForm({ primary_theme: "", secondary_theme: "", price: "" });
+      } else if (res.status === 409) {
+        // Already exists — mark as registered
+        setTickerStatus("registered");
+        setShowRegister(false);
+      } else {
+        alert("Failed to register asset.");
+      }
+    } catch {
+      alert("Error registering asset.");
+    } finally {
+      setRegLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (tickerStatus === "unregistered") {
+      alert("Please register this ticker with themes before adding a trade.");
+      return;
+    }
+    setLoading(true);
+    try {
+      let res = await fetch("/api/trades/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...formData,
+          price: parseFloat(formData.price),
+          quantity: parseFloat(formData.quantity),
+        }),
+      });
+
+      if (res.status === 409) {
+        if (confirm("This looks like a duplicate trade. Add it anyway?")) {
+          res = await fetch("/api/trades/manual?force=true", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...formData,
+              price: parseFloat(formData.price),
+              quantity: parseFloat(formData.quantity),
+            }),
+          });
+        } else {
+          setLoading(false);
+          return;
         }
-    };
+      }
 
-    return (
-        <form onSubmit={handleSubmit} className="p-4 bg-gray-800 rounded-lg shadow-md mb-6 border border-gray-700">
-            <h3 className="text-lg font-semibold text-white mb-4">Add Manual Trade</h3>
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                <input type="date" name="date" value={formData.date} onChange={handleChange} className="bg-gray-700 text-white p-2 rounded" required />
-                <input type="text" name="ticker" placeholder="Ticker" value={formData.ticker} onChange={handleChange} className="bg-gray-700 text-white p-2 rounded uppercase" required />
-                <select name="side" value={formData.side} onChange={handleChange} className="bg-gray-700 text-white p-2 rounded">
-                    <option value="Buy">Buy</option>
-                    <option value="Sell">Sell</option>
-                </select>
-                <select name="type" value={formData.type} onChange={handleChange} className="bg-gray-700 text-white p-2 rounded">
-                    <option value="Equity">Equity</option>
-                    <option value="Option">Option</option>
-                </select>
-                <input type="number" step="0.01" name="quantity" placeholder="Quantity" value={formData.quantity} onChange={handleChange} className="bg-gray-700 text-white p-2 rounded" required />
-                <input type="number" step="0.01" name="price" placeholder="Price" value={formData.price} onChange={handleChange} className="bg-gray-700 text-white p-2 rounded" required />
+      if (res.ok) {
+        alert("Trade added successfully!");
+        onTradeAdded();
+        setFormData({ ...formData, ticker: "", price: "", quantity: "" });
+        setTickerStatus("idle");
+      } else {
+        alert("Failed to add trade.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error adding trade.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+      <h3 className="text-lg font-semibold text-white mb-4">Add Manual Trade</h3>
+
+      <form onSubmit={handleSubmit}>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Date</label>
+            <input
+              type="date"
+              name="date"
+              value={formData.date}
+              onChange={handleChange}
+              className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none [&::-webkit-calendar-picker-indicator]:invert"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              Ticker
+              {tickerStatus === "registered" && (
+                <span className="ml-2 text-green-400 text-xs">Registered</span>
+              )}
+              {tickerStatus === "unregistered" && (
+                <span className="ml-2 text-amber-400 text-xs">Not registered</span>
+              )}
+            </label>
+            <input
+              type="text"
+              name="ticker"
+              placeholder="AAPL"
+              value={formData.ticker}
+              onChange={handleChange}
+              onBlur={() => checkTicker(formData.ticker)}
+              className={`w-full bg-gray-700 text-white p-2 rounded border focus:outline-none uppercase ${
+                tickerStatus === "registered"
+                  ? "border-green-600"
+                  : tickerStatus === "unregistered"
+                    ? "border-amber-600"
+                    : "border-gray-600 focus:border-indigo-500"
+              }`}
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Side</label>
+            <select
+              name="side"
+              value={formData.side}
+              onChange={handleChange}
+              className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="Buy">Buy</option>
+              <option value="Sell">Sell</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Type</label>
+            <select
+              name="type"
+              value={formData.type}
+              onChange={handleChange}
+              className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="Equity">Equity</option>
+              <option value="Option">Option</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Quantity</label>
+            <input
+              type="number"
+              step="0.01"
+              name="quantity"
+              placeholder="0"
+              value={formData.quantity}
+              onChange={handleChange}
+              className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Price</label>
+            <input
+              type="number"
+              step="0.01"
+              name="price"
+              placeholder="0.00"
+              value={formData.price}
+              onChange={handleChange}
+              className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
+              required
+            />
+          </div>
+        </div>
+
+        {/* Inline Registration for unregistered tickers */}
+        {showRegister && (
+          <div className="mt-4 p-4 bg-amber-900/20 border border-amber-700/50 rounded-lg">
+            <p className="text-sm text-amber-300 mb-3">
+              <strong>{formData.ticker.toUpperCase()}</strong> is not registered. Assign themes before trading:
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Primary Theme</label>
+                <input
+                  type="text"
+                  list="reg-primary-themes"
+                  value={regForm.primary_theme}
+                  onChange={(e) => setRegForm({ ...regForm, primary_theme: e.target.value })}
+                  placeholder="e.g. AI, Energy"
+                  className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none text-sm"
+                  required
+                />
+                <datalist id="reg-primary-themes">
+                  {themes.primary.map((t) => (
+                    <option key={t} value={t} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Secondary Theme</label>
+                <input
+                  type="text"
+                  list="reg-secondary-themes"
+                  value={regForm.secondary_theme}
+                  onChange={(e) => setRegForm({ ...regForm, secondary_theme: e.target.value })}
+                  placeholder="e.g. Semiconductor"
+                  className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none text-sm"
+                  required
+                />
+                <datalist id="reg-secondary-themes">
+                  {themes.secondary.map((t) => (
+                    <option key={t} value={t} />
+                  ))}
+                </datalist>
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={handleRegister}
+                  disabled={regLoading}
+                  className="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  {regLoading ? "Registering..." : "Register Asset"}
+                </button>
+              </div>
             </div>
-            <button type="submit" disabled={loading} className="mt-4 w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded font-medium transition-colors">
-                {loading ? "Adding..." : "Add Trade"}
-            </button>
-        </form>
-    );
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading || tickerStatus === "unregistered"}
+          className="mt-4 w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded font-medium transition-colors"
+        >
+          {loading ? "Adding..." : "Add Trade"}
+        </button>
+      </form>
+    </div>
+  );
 };
 
 export default ManualTradeForm;

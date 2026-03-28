@@ -1,93 +1,286 @@
 "use client";
-import { useMemo } from 'react';
-import { PortfolioSnapshot } from '../app/types';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { useMemo, useState } from "react";
+import { PortfolioSnapshot } from "../app/types";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
 
 interface ThemeAnalysisProps {
-    positions: PortfolioSnapshot[];
+  positions: PortfolioSnapshot[];
 }
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1', '#a4de6c', '#d0ed57'];
+interface ThemeEntry {
+  name: string;
+  value: number;
+}
+
+const COLORS = [
+  "#6366f1", "#06b6d4", "#f59e0b", "#ef4444", "#8b5cf6",
+  "#10b981", "#f97316", "#ec4899", "#14b8a6", "#a855f7",
+  "#eab308", "#3b82f6", "#22c55e", "#e11d48", "#0ea5e9",
+];
 
 const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
+  const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
+  const [selectedType, setSelectedType] = useState<"primary" | "secondary" | null>(null);
 
-    const themeData = useMemo(() => {
-        const themes: Record<string, number> = {};
-        let totalValue = 0;
+  const longPositions = useMemo(
+    () => positions.filter((p) => p.quantity > 0 && p.market_value > 0),
+    [positions]
+  );
 
-        positions.forEach(pos => {
-            if (pos.quantity > 0 && pos.market_value > 0) { // Only long positions
-                const theme = pos.primary_theme || "Unknown";
-                themes[theme] = (themes[theme] || 0) + pos.market_value;
-                totalValue += pos.market_value;
-            }
-        });
+  const totalValue = useMemo(
+    () => longPositions.reduce((s, p) => s + p.market_value, 0),
+    [longPositions]
+  );
 
-        return Object.entries(themes)
-            .map(([name, value]) => ({ name, value }))
-            .sort((a, b) => b.value - a.value); // Sort by highest exposure
-    }, [positions]);
+  // Primary theme aggregation
+  const primaryData: ThemeEntry[] = useMemo(() => {
+    const map: Record<string, number> = {};
+    longPositions.forEach((p) => {
+      const t = p.primary_theme || "Unassigned";
+      map[t] = (map[t] || 0) + p.market_value;
+    });
+    return Object.entries(map)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [longPositions]);
 
-    // Secondary Theme Handling (Optional: could be a second chart or drilldown)
+  // Secondary theme aggregation
+  const secondaryData: ThemeEntry[] = useMemo(() => {
+    const map: Record<string, number> = {};
+    longPositions.forEach((p) => {
+      const t = p.secondary_theme || "Unassigned";
+      map[t] = (map[t] || 0) + p.market_value;
+    });
+    return Object.entries(map)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [longPositions]);
 
-    if (themeData.length === 0) return null;
+  // Stocks in the selected theme
+  const selectedStocks = useMemo(() => {
+    if (!selectedTheme || !selectedType) return [];
+    return longPositions
+      .filter((p) => {
+        const theme =
+          selectedType === "primary"
+            ? p.primary_theme || "Unassigned"
+            : p.secondary_theme || "Unassigned";
+        return theme === selectedTheme;
+      })
+      .sort((a, b) => b.market_value - a.market_value);
+  }, [longPositions, selectedTheme, selectedType]);
+
+  const selectedTotal = selectedStocks.reduce((s, p) => s + p.market_value, 0);
+
+  if (primaryData.length === 0) return null;
+
+  const handleBarClick = (type: "primary" | "secondary", name: string) => {
+    if (selectedType === type && selectedTheme === name) {
+      setSelectedTheme(null);
+      setSelectedType(null);
+    } else {
+      setSelectedTheme(name);
+      setSelectedType(type);
+    }
+  };
+
+  const renderChart = (
+    data: ThemeEntry[],
+    type: "primary" | "secondary",
+    label: string
+  ) => {
+    const chartHeight = Math.max(280, data.length * 30);
+    const isActive = selectedType === type;
 
     return (
-        <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-            <h3 className="text-xl font-semibold text-gray-200 mb-6">Theme Exposure (Primary)</h3>
-            <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                        <Pie
-                            data={themeData}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={false}
-                            outerRadius={100}
-                            fill="#8884d8"
-                            dataKey="value"
-                            label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`}
-                        >
-                            {themeData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                        </Pie>
-                        <Tooltip
-                            formatter={(value: any) => [`$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Market Value']}
-                            contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#f3f4f6' }}
-                        />
-                        <Legend />
-                    </PieChart>
-                </ResponsiveContainer>
-            </div>
-
-            {/* Table Breakdown */}
-            <div className="mt-8 overflow-x-auto">
-                <table className="min-w-full text-left text-sm whitespace-nowrap">
-                    <thead className="bg-gray-700/50 uppercase tracking-wider border-b border-gray-600 text-gray-400">
-                        <tr>
-                            <th className="px-4 py-2">Theme</th>
-                            <th className="px-4 py-2 text-right">Exposure</th>
-                            <th className="px-4 py-2 text-right">% Portfolio</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-700">
-                        {themeData.map((item) => {
-                            const total = themeData.reduce((acc, curr) => acc + curr.value, 0);
-                            const percent = (item.value / total) * 100;
-                            return (
-                                <tr key={item.name} className="hover:bg-gray-700/25">
-                                    <td className="px-4 py-2 font-medium text-gray-200">{item.name}</td>
-                                    <td className="px-4 py-2 text-right text-gray-300">${item.value.toLocaleString(undefined, { minimumFractionDigits: 0 })}</td>
-                                    <td className="px-4 py-2 text-right text-gray-400">{percent.toFixed(1)}%</td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-            </div>
+      <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+        <h3 className="text-lg font-semibold text-gray-200 mb-1">{label}</h3>
+        <p className="text-xs text-gray-400 mb-4">
+          Click any bar to see individual positions
+        </p>
+        <div
+          style={{ height: chartHeight, minWidth: 0 }}
+          className="w-full overflow-hidden"
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={data}
+              layout="vertical"
+              margin={{ top: 0, right: 20, left: 0, bottom: 0 }}
+            >
+              <XAxis
+                type="number"
+                tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                tick={{ fill: "#9ca3af", fontSize: 11 }}
+                axisLine={{ stroke: "#374151" }}
+                tickLine={false}
+              />
+              <YAxis
+                type="category"
+                dataKey="name"
+                width={140}
+                tick={{ fill: "#d1d5db", fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip
+                formatter={(value: any) => [
+                  `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 0 })} (${totalValue > 0 ? ((Number(value) / totalValue) * 100).toFixed(1) : 0}%)`,
+                  "Exposure",
+                ]}
+                contentStyle={{
+                  backgroundColor: "#1f2937",
+                  borderColor: "#374151",
+                  color: "#f3f4f6",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                }}
+              />
+              <Bar
+                dataKey="value"
+                radius={[0, 4, 4, 0]}
+                cursor="pointer"
+                onClick={(d: any) => handleBarClick(type, d.name as string)}
+              >
+                {data.map((entry, index) => (
+                  <Cell
+                    key={entry.name}
+                    fill={COLORS[index % COLORS.length]}
+                    opacity={
+                      isActive && selectedTheme !== entry.name ? 0.3 : 1
+                    }
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
+      </div>
     );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Two charts side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {renderChart(primaryData, "primary", "Primary Theme Exposure")}
+        {renderChart(secondaryData, "secondary", "Secondary Theme Exposure")}
+      </div>
+
+      {/* Expanded stock detail panel */}
+      {selectedTheme && selectedStocks.length > 0 && (
+        <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h3 className="text-lg font-semibold text-white">
+                {selectedTheme}
+                <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded bg-gray-700 text-gray-400">
+                  {selectedType === "primary" ? "Primary" : "Secondary"}
+                </span>
+              </h3>
+              <p className="text-xs text-gray-400 mt-1">
+                {selectedStocks.length} position
+                {selectedStocks.length !== 1 ? "s" : ""} &middot; $
+                {selectedTotal.toLocaleString(undefined, {
+                  minimumFractionDigits: 0,
+                })}{" "}
+                total &middot;{" "}
+                {totalValue > 0
+                  ? ((selectedTotal / totalValue) * 100).toFixed(1)
+                  : 0}
+                % of portfolio
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setSelectedTheme(null);
+                setSelectedType(null);
+              }}
+              className="text-sm text-gray-400 hover:text-white px-3 py-1 rounded hover:bg-gray-700"
+            >
+              Close
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm whitespace-nowrap">
+              <thead className="text-gray-500 uppercase tracking-wider text-xs border-b border-gray-700">
+                <tr>
+                  <th className="px-4 py-2">Ticker</th>
+                  <th className="px-4 py-2">Primary</th>
+                  <th className="px-4 py-2">Secondary</th>
+                  <th className="px-4 py-2 text-right">Qty</th>
+                  <th className="px-4 py-2 text-right">Mkt Value</th>
+                  <th className="px-4 py-2 text-right">% of Theme</th>
+                  <th className="px-4 py-2 text-right">% of Portfolio</th>
+                  <th className="px-4 py-2 text-right">Unreal. P&L</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700/50">
+                {selectedStocks.map((s) => (
+                  <tr key={s.ticker} className="hover:bg-gray-700/30">
+                    <td className="px-4 py-2.5 font-medium text-white">
+                      {s.ticker}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">
+                        {s.primary_theme || "--"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="px-1.5 py-0.5 rounded text-xs bg-cyan-900/40 text-cyan-300 border border-cyan-700/50">
+                        {s.secondary_theme || "--"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-gray-300">
+                      {s.quantity.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-gray-300">
+                      $
+                      {s.market_value.toLocaleString(undefined, {
+                        minimumFractionDigits: 0,
+                      })}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-gray-400">
+                      {selectedTotal > 0
+                        ? ((s.market_value / selectedTotal) * 100).toFixed(1)
+                        : 0}
+                      %
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-gray-400">
+                      {totalValue > 0
+                        ? ((s.market_value / totalValue) * 100).toFixed(1)
+                        : 0}
+                      %
+                    </td>
+                    <td
+                      className={`px-4 py-2.5 text-right font-medium ${
+                        s.unrealized_pnl >= 0
+                          ? "text-green-400"
+                          : "text-red-400"
+                      }`}
+                    >
+                      $
+                      {s.unrealized_pnl.toLocaleString(undefined, {
+                        minimumFractionDigits: 0,
+                      })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default ThemeAnalysis;

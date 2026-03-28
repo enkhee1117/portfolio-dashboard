@@ -26,3 +26,16 @@ export interface PortfolioSnapshot {
     primary_theme?: string | null;
     secondary_theme?: string | null;
 }
+
+export interface Asset {
+    ticker: string;
+    price: number;
+    primary_theme: string;
+    secondary_theme: string;
+    last_updated?: string | null;
+}
+
+export interface ThemeLists {
+    primary: string[];
+    secondary: string[];
+}

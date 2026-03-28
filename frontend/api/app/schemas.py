@@ -42,3 +42,25 @@ class PortfolioSnapshot(PortfolioSnapshotBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+# --- Asset / Theme Management ---
+
+class AssetBase(BaseModel):
+    ticker: str
+    price: float = 0.0
+    primary_theme: str
+    secondary_theme: str
+
+class AssetCreate(AssetBase):
+    pass
+
+class AssetUpdate(BaseModel):
+    price: Optional[float] = None
+    primary_theme: Optional[str] = None
+    secondary_theme: Optional[str] = None
+
+class Asset(AssetBase):
+    last_updated: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+

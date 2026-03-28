@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { Trade } from '../types';
-import Link from 'next/link';
 
 export default function TradeHistory() {
     const [trades, setTrades] = useState<Trade[]>([]);
@@ -115,15 +114,10 @@ export default function TradeHistory() {
     return (
         <main className="min-h-screen bg-gray-900 text-gray-100 p-8 font-sans">
             <div className="max-w-7xl mx-auto space-y-8">
-                {/* Header */}
-                <div className="flex justify-between items-center border-b border-gray-800 pb-6">
-                    <div>
-                        <h1 className="text-3xl font-bold text-white">Trade History</h1>
-                        <p className="mt-2 text-gray-400">View and manage all past transactions.</p>
-                    </div>
-                    <Link href="/" className="px-4 py-2 border border-blue-500 text-blue-400 rounded-md hover:bg-blue-900/20 transition-colors">
-                        Back to Dashboard
-                    </Link>
+                {/* Page Header */}
+                <div>
+                    <h1 className="text-2xl font-bold text-white">Trade History</h1>
+                    <p className="mt-1 text-sm text-gray-400">View and manage all past transactions</p>
                 </div>
 
                 {/* Filters */}

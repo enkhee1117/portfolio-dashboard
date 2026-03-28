@@ -3,7 +3,7 @@ from . import schemas
 from datetime import datetime
 from google.cloud import firestore
 
-def import_data(db: firestore.Client, file_path: str):
+def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False):
     def clean_currency(val):
         if pd.isna(val) or val == '':
             return 0.0
@@ -23,14 +23,15 @@ def import_data(db: firestore.Client, file_path: str):
         content_sample = "".join(first_lines)
         
         if "Assets,Date,Ticker" in content_sample:
-            # Load existing trades for signature
-            existing_docs = db.collection('trades').stream()
+            # Load existing trades for deduplication (skip if requested to save quota)
             existing_signatures = set()
-            for doc in existing_docs:
-                d = doc.to_dict()
-                if 'date' in d and 'ticker' in d and 'side' in d and 'price' in d and 'quantity' in d:
-                    dt = d['date'].replace(tzinfo=None) if hasattr(d['date'], 'replace') else d['date']
-                    existing_signatures.add((dt, d['ticker'], d['side'], d['price'], d['quantity']))
+            if not skip_dedup:
+                existing_docs = db.collection('trades').stream()
+                for doc in existing_docs:
+                    d = doc.to_dict()
+                    if 'date' in d and 'ticker' in d and 'side' in d and 'price' in d and 'quantity' in d:
+                        dt = d['date'].replace(tzinfo=None) if hasattr(d['date'], 'replace') else d['date']
+                        existing_signatures.add((dt, d['ticker'], d['side'], d['price'], d['quantity']))
             
             header_row = 0
             for i, line in enumerate(first_lines):
@@ -98,23 +99,24 @@ def import_data(db: firestore.Client, file_path: str):
                 batch.commit()
             
             if new_trades_list:
-                from . import wash_sales
-                # We should really only run wash sales for affected tickers, 
-                # but to be safe we'll fetch all trades for all affected tickers.
-                affected_tickers = set([t.ticker for t in new_trades_list])
-                for t in affected_tickers:
-                    from google.cloud.firestore_v1.base_query import FieldFilter
-                    tdocs = db.collection('trades').where(filter=FieldFilter('ticker', '==', t)).stream()
-                    all_t = []
-                    for td in tdocs:
-                        d = td.to_dict()
-                        if 'date' in d and hasattr(d['date'], 'replace'):
-                            d['date'] = d['date'].replace(tzinfo=None)
-                        d['id'] = td.id
-                        all_t.append(schemas.Trade(**d))
-                    wash_sales.detect_wash_sales(all_t, db)
+                try:
+                    from . import wash_sales
+                    affected_tickers = set([t.ticker for t in new_trades_list])
+                    for t in affected_tickers:
+                        from google.cloud.firestore_v1.base_query import FieldFilter
+                        tdocs = db.collection('trades').where(filter=FieldFilter('ticker', '==', t)).stream()
+                        all_t = []
+                        for td in tdocs:
+                            d = td.to_dict()
+                            if 'date' in d and hasattr(d['date'], 'replace'):
+                                d['date'] = d['date'].replace(tzinfo=None)
+                            d['id'] = td.id
+                            all_t.append(schemas.Trade(**d))
+                        wash_sales.detect_wash_sales(all_t, db)
+                except Exception as wash_err:
+                    print(f"Wash sales detection failed (trades were still imported): {wash_err}")
 
-        elif "Equity Portfolio" in content_sample or "Main,Stats" in content_sample or "Assets\tTicker" in content_sample:
+        elif "Equity Portfolio" in content_sample or "Main,Stats" in content_sample or "Assets\tTicker" in content_sample or ("Assets" in content_sample and "Ticker" in content_sample and "Primary theme" in content_sample):
             sep = '\t' if "Assets\tTicker" in content_sample else ','
             header_row = 0
             for i, line in enumerate(first_lines):

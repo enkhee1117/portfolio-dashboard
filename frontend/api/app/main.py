@@ -41,18 +41,18 @@ def read_root():
     return {"message": "Portfolio Tracker API (Firebase Edition)"}
 
 @app.post("/import")
-async def import_excel(file: UploadFile = File(...), db = Depends(get_db)):
+async def import_excel(file: UploadFile = File(...), skip_dedup: bool = False, db = Depends(get_db)):
     file_location = f"temp_{file.filename}"
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(file.file, file_object)
-    
+
     try:
-        result = importer.import_data(db, file_location)
+        result = importer.import_data(db, file_location, skip_dedup=skip_dedup)
         count = result.get("added", 0) if result else 0
     finally:
         if os.path.exists(file_location):
             os.remove(file_location)
-        
+
     return {"message": f"Import successful. Added {count} new trades."}
 
 @app.get("/portfolio", response_model=list[schemas.PortfolioSnapshot])
@@ -147,3 +147,150 @@ def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)
     if hasattr(trade_data['date'], 'replace'):
         trade_data['date'] = trade_data['date'].replace(tzinfo=None)
     return schemas.Trade(**trade_data)
+
+
+# ── Asset / Theme Management ──────────────────────────────────────────
+
+@app.get("/assets", response_model=list[schemas.Asset])
+def list_assets(db=Depends(get_db)):
+    docs = db.collection('asset_prices').stream()
+    results = []
+    for doc in docs:
+        d = doc.to_dict()
+        if 'last_updated' in d and hasattr(d['last_updated'], 'replace'):
+            d['last_updated'] = d['last_updated'].replace(tzinfo=None)
+        results.append(schemas.Asset(**d))
+    results.sort(key=lambda a: a.ticker)
+    return results
+
+
+@app.get("/assets/themes")
+def list_themes(db=Depends(get_db)):
+    docs = db.collection('asset_prices').stream()
+    primary_set: set[str] = set()
+    secondary_set: set[str] = set()
+    for doc in docs:
+        d = doc.to_dict()
+        if d.get('primary_theme'):
+            primary_set.add(d['primary_theme'])
+        if d.get('secondary_theme'):
+            secondary_set.add(d['secondary_theme'])
+    return {
+        "primary": sorted(primary_set),
+        "secondary": sorted(secondary_set),
+    }
+
+
+@app.post("/assets", response_model=schemas.Asset, status_code=201)
+def create_asset(asset: schemas.AssetCreate, db=Depends(get_db)):
+    ticker = asset.ticker.upper()
+    doc_ref = db.collection('asset_prices').document(ticker)
+    if doc_ref.get().exists:
+        raise HTTPException(status_code=409, detail=f"Asset '{ticker}' already exists.")
+    data = {
+        "ticker": ticker,
+        "price": asset.price,
+        "primary_theme": asset.primary_theme,
+        "secondary_theme": asset.secondary_theme,
+        "last_updated": datetime.utcnow(),
+    }
+    doc_ref.set(data)
+    data['last_updated'] = data['last_updated'].replace(tzinfo=None)
+    return schemas.Asset(**data)
+
+
+@app.put("/assets/{ticker}", response_model=schemas.Asset)
+def update_asset(ticker: str, asset: schemas.AssetUpdate, db=Depends(get_db)):
+    ticker = ticker.upper()
+    doc_ref = db.collection('asset_prices').document(ticker)
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail=f"Asset '{ticker}' not found.")
+    updates = {k: v for k, v in asset.model_dump().items() if v is not None}
+    updates['last_updated'] = datetime.utcnow()
+    doc_ref.update(updates)
+    # Return the full updated document
+    d = doc_ref.get().to_dict()
+    if 'last_updated' in d and hasattr(d['last_updated'], 'replace'):
+        d['last_updated'] = d['last_updated'].replace(tzinfo=None)
+    return schemas.Asset(**d)
+
+
+@app.delete("/assets/{ticker}")
+def delete_asset(ticker: str, db=Depends(get_db)):
+    ticker = ticker.upper()
+    doc_ref = db.collection('asset_prices').document(ticker)
+    if not doc_ref.get().exists:
+        raise HTTPException(status_code=404, detail=f"Asset '{ticker}' not found.")
+    doc_ref.delete()
+    return {"message": f"Asset '{ticker}' deleted successfully."}
+
+
+# ── Price Refresh (Yahoo Finance) ─────────────────────────────────────
+
+@app.post("/assets/refresh-prices")
+def refresh_prices(db=Depends(get_db)):
+    """Fetch latest closing prices from Yahoo Finance for all assets and update Firestore."""
+    import yfinance as yf
+
+    docs = db.collection('asset_prices').stream()
+    tickers = []
+    for doc in docs:
+        d = doc.to_dict()
+        if d.get('ticker'):
+            tickers.append(d['ticker'])
+
+    if not tickers:
+        return {"message": "No assets to update.", "updated": 0, "failed": []}
+
+    # yfinance handles batching internally — one call for all tickers
+    try:
+        data = yf.download(tickers, period='1d', progress=False)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Yahoo Finance error: {e}")
+
+    if data.empty:
+        return {"message": "No price data returned.", "updated": 0, "failed": tickers}
+
+    # Handle single vs multi-ticker response format
+    is_multi = isinstance(data.columns, __import__('pandas').MultiIndex)
+
+    updated = 0
+    failed = []
+    batch = db.batch()
+    batch_count = 0
+
+    for ticker in tickers:
+        try:
+            if is_multi:
+                close_price = float(data['Close'][ticker].iloc[-1])
+            else:
+                # Single ticker — columns are just 'Close', 'Open', etc.
+                close_price = float(data['Close'].iloc[-1])
+
+            if close_price > 0:
+                doc_ref = db.collection('asset_prices').document(ticker)
+                batch.update(doc_ref, {
+                    "price": round(close_price, 2),
+                    "last_updated": datetime.utcnow(),
+                })
+                batch_count += 1
+                updated += 1
+
+                if batch_count >= 400:
+                    batch.commit()
+                    batch = db.batch()
+                    batch_count = 0
+            else:
+                failed.append(ticker)
+        except Exception:
+            failed.append(ticker)
+
+    if batch_count > 0:
+        batch.commit()
+
+    return {
+        "message": f"Updated {updated} prices, {len(failed)} failed.",
+        "updated": updated,
+        "failed": failed,
+    }
