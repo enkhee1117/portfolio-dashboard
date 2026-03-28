@@ -23,7 +23,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
 
   // Separate negative-quantity positions for flagging
   const negativePositions = useMemo(
-    () => positions.filter((p) => p.quantity < 0),
+    () => positions.filter((p) => p.quantity < -0.0001),
     [positions]
   );
 
@@ -31,7 +31,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
     const q = filterText.toLowerCase();
     let data = positions.filter((p) => {
       // Hide zero-exposure unless toggled on
-      if (!showZero && p.quantity === 0) return false;
+      if (!showZero && Math.abs(p.quantity) < 0.0001) return false;
       return (
         p.ticker.toLowerCase().includes(q) ||
         (p.primary_theme || "").toLowerCase().includes(q) ||
@@ -51,7 +51,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
     return data;
   }, [positions, filterText, sortKey, sortOrder, showZero]);
 
-  const zeroCount = useMemo(() => positions.filter((p) => p.quantity === 0).length, [positions]);
+  const zeroCount = useMemo(() => positions.filter((p) => Math.abs(p.quantity) < 0.0001).length, [positions]);
 
   const SortIcon = ({ colKey }: { colKey: keyof PortfolioSnapshot }) => {
     if (sortKey !== colKey)
