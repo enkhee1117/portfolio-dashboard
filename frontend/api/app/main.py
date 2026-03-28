@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
 from . import schemas, database, importer, calculator
 from google.cloud.firestore_v1.base_query import FieldFilter
 import os
 import shutil
+import json
 from datetime import datetime
 
 app = FastAPI()
@@ -293,4 +295,146 @@ def refresh_prices(db=Depends(get_db)):
         "message": f"Updated {updated} prices, {len(failed)} failed.",
         "updated": updated,
         "failed": failed,
+    }
+
+
+# ── Export / Restore Backup ───────────────────────────────────────────
+
+@app.get("/backup/export")
+def export_backup(db=Depends(get_db)):
+    """Export all trades and asset data as a single JSON backup file."""
+
+    # Export trades
+    trades = []
+    for doc in db.collection('trades').stream():
+        d = doc.to_dict()
+        # Convert datetime to ISO string for JSON serialization
+        if 'date' in d and hasattr(d['date'], 'isoformat'):
+            d['date'] = d['date'].replace(tzinfo=None).isoformat()
+        if 'expiration_date' in d and d['expiration_date'] and hasattr(d['expiration_date'], 'isoformat'):
+            d['expiration_date'] = d['expiration_date'].replace(tzinfo=None).isoformat()
+        d['_doc_id'] = doc.id
+        trades.append(d)
+
+    # Export assets
+    assets = []
+    for doc in db.collection('asset_prices').stream():
+        d = doc.to_dict()
+        if 'last_updated' in d and d['last_updated'] and hasattr(d['last_updated'], 'isoformat'):
+            d['last_updated'] = d['last_updated'].replace(tzinfo=None).isoformat()
+        d['_doc_id'] = doc.id
+        assets.append(d)
+
+    backup = {
+        "version": 1,
+        "exported_at": datetime.utcnow().isoformat(),
+        "trades_count": len(trades),
+        "assets_count": len(assets),
+        "trades": trades,
+        "assets": assets,
+    }
+
+    return JSONResponse(
+        content=backup,
+        headers={
+            "Content-Disposition": f'attachment; filename="portfolio_backup_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.json"'
+        },
+    )
+
+
+@app.post("/backup/restore")
+async def restore_backup(file: UploadFile = File(...), db=Depends(get_db)):
+    """Restore trades and assets from a JSON backup file. Replaces all existing data."""
+    try:
+        content = await file.read()
+        backup = json.loads(content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid backup file: {e}")
+
+    if backup.get("version") != 1:
+        raise HTTPException(status_code=400, detail="Unsupported backup version.")
+
+    trades_data = backup.get("trades", [])
+    assets_data = backup.get("assets", [])
+
+    # --- Delete existing data ---
+    # Delete all trades
+    existing_trades = db.collection('trades').stream()
+    batch = db.batch()
+    batch_count = 0
+    deleted_trades = 0
+    for doc in existing_trades:
+        batch.delete(doc.reference)
+        batch_count += 1
+        deleted_trades += 1
+        if batch_count >= 400:
+            batch.commit()
+            batch = db.batch()
+            batch_count = 0
+    if batch_count > 0:
+        batch.commit()
+
+    # Delete all assets
+    existing_assets = db.collection('asset_prices').stream()
+    batch = db.batch()
+    batch_count = 0
+    deleted_assets = 0
+    for doc in existing_assets:
+        batch.delete(doc.reference)
+        batch_count += 1
+        deleted_assets += 1
+        if batch_count >= 400:
+            batch.commit()
+            batch = db.batch()
+            batch_count = 0
+    if batch_count > 0:
+        batch.commit()
+
+    # --- Restore trades ---
+    batch = db.batch()
+    batch_count = 0
+    restored_trades = 0
+    for t in trades_data:
+        doc_id = t.pop('_doc_id', None)
+        # Convert ISO date strings back to datetime
+        if 'date' in t and isinstance(t['date'], str):
+            t['date'] = datetime.fromisoformat(t['date'])
+        if 'expiration_date' in t and isinstance(t.get('expiration_date'), str):
+            t['expiration_date'] = datetime.fromisoformat(t['expiration_date'])
+
+        doc_ref = db.collection('trades').document(doc_id) if doc_id else db.collection('trades').document()
+        batch.set(doc_ref, t)
+        batch_count += 1
+        restored_trades += 1
+        if batch_count >= 400:
+            batch.commit()
+            batch = db.batch()
+            batch_count = 0
+    if batch_count > 0:
+        batch.commit()
+
+    # --- Restore assets ---
+    batch = db.batch()
+    batch_count = 0
+    restored_assets = 0
+    for a in assets_data:
+        doc_id = a.pop('_doc_id', None)
+        if 'last_updated' in a and isinstance(a.get('last_updated'), str):
+            a['last_updated'] = datetime.fromisoformat(a['last_updated'])
+
+        doc_ref = db.collection('asset_prices').document(doc_id or a.get('ticker', ''))
+        batch.set(doc_ref, a)
+        batch_count += 1
+        restored_assets += 1
+        if batch_count >= 400:
+            batch.commit()
+            batch = db.batch()
+            batch_count = 0
+    if batch_count > 0:
+        batch.commit()
+
+    return {
+        "message": f"Restore complete. {restored_trades} trades and {restored_assets} assets restored.",
+        "deleted": {"trades": deleted_trades, "assets": deleted_assets},
+        "restored": {"trades": restored_trades, "assets": restored_assets},
     }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import ImportButton from "../../components/ImportButton";
 
 export default function SettingsPage() {
@@ -11,6 +11,17 @@ export default function SettingsPage() {
     updated: number;
     failed: string[];
   } | null>(null);
+
+  // Export
+  const [exporting, setExporting] = useState(false);
+
+  // Restore
+  const [restoring, setRestoring] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<{
+    message: string;
+    restored: { trades: number; assets: number };
+  } | null>(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const handleRefreshPrices = async () => {
     setRefreshing(true);
@@ -30,6 +41,66 @@ export default function SettingsPage() {
     }
   };
 
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch("/api/backup/export");
+      if (res.ok) {
+        const data = await res.json();
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `portfolio_backup_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        alert("Failed to export data.");
+      }
+    } catch {
+      alert("Error exporting data.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!confirm(
+      "This will DELETE all existing trades and assets and replace them with the backup data. Are you sure?"
+    )) {
+      if (restoreInputRef.current) restoreInputRef.current.value = "";
+      return;
+    }
+
+    setRestoring(true);
+    setRestoreResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/backup/restore", {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRestoreResult(data);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Restore failed: ${err.detail || "Unknown error"}`);
+      }
+    } catch {
+      alert("Error restoring backup.");
+    } finally {
+      setRestoring(false);
+      if (restoreInputRef.current) restoreInputRef.current.value = "";
+    }
+  };
+
   return (
     <main className="min-h-screen bg-gray-900 text-gray-100 p-8 font-sans">
       <div className="max-w-3xl mx-auto space-y-8">
@@ -39,6 +110,80 @@ export default function SettingsPage() {
           <p className="mt-1 text-sm text-gray-400">
             Data management and portfolio maintenance
           </p>
+        </div>
+
+        {/* Export / Restore Backup */}
+        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+          <h3 className="text-lg font-semibold text-white mb-1">Backup &amp; Restore</h3>
+          <p className="text-sm text-gray-400 mb-5">
+            Export all trade history and asset themes as a JSON snapshot. Use restore to recover data from a backup.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Export */}
+            <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+              <h4 className="text-sm font-medium text-white mb-1">Export Data</h4>
+              <p className="text-xs text-gray-500 mb-3">
+                Downloads a JSON file with all trades, asset themes, and prices.
+              </p>
+              <button
+                onClick={handleExport}
+                disabled={exporting}
+                className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {exporting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                    Exporting...
+                  </span>
+                ) : (
+                  "Export Backup"
+                )}
+              </button>
+            </div>
+
+            {/* Restore */}
+            <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+              <h4 className="text-sm font-medium text-white mb-1">Restore Data</h4>
+              <p className="text-xs text-gray-500 mb-3">
+                Upload a backup JSON file to replace all current data.
+              </p>
+              <label
+                className={`block w-full px-4 py-2.5 text-center rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  restoring
+                    ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+                    : "bg-amber-600 hover:bg-amber-700 text-white"
+                }`}
+              >
+                {restoring ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                    Restoring...
+                  </span>
+                ) : (
+                  "Restore from Backup"
+                )}
+                <input
+                  ref={restoreInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleRestore}
+                  disabled={restoring}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* Restore result */}
+          {restoreResult && (
+            <div className="mt-4 p-4 bg-green-900/20 rounded-lg border border-green-700/50">
+              <p className="text-sm text-green-400 font-medium">{restoreResult.message}</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {restoreResult.restored.trades} trades and {restoreResult.restored.assets} assets restored.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Refresh Prices */}
@@ -67,7 +212,6 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          {/* Result */}
           {refreshResult && (
             <div className="mt-4 p-4 bg-gray-900/50 rounded-lg border border-gray-700">
               <p className="text-sm text-green-400 font-medium">{refreshResult.message}</p>
@@ -119,12 +263,12 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Data Info */}
+        {/* About */}
         <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
           <h3 className="text-lg font-semibold text-white">About</h3>
           <p className="text-sm text-gray-400 mt-1">
             Portfolio Tracker uses Google Cloud Firestore for data storage and Yahoo Finance
-            for live price data. Deployed on Vercel.
+            for live price data.
           </p>
           <div className="mt-4 grid grid-cols-2 gap-4 text-xs">
             <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
