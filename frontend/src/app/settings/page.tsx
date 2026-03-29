@@ -12,8 +12,11 @@ export default function SettingsPage() {
     failed: string[];
   } | null>(null);
 
-  // Export
+  // Export JSON
   const [exporting, setExporting] = useState(false);
+
+  // Export CSV
+  const [exportingCsv, setExportingCsv] = useState(false);
 
   // Restore
   const [restoring, setRestoring] = useState(false);
@@ -63,6 +66,30 @@ export default function SettingsPage() {
       alert("Error exporting data.");
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    setExportingCsv(true);
+    try {
+      const res = await fetch("/api/trades/export-csv");
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `trades_export_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        alert("Failed to export CSV.");
+      }
+    } catch {
+      alert("Error exporting CSV.");
+    } finally {
+      setExportingCsv(false);
     }
   };
 
@@ -184,6 +211,33 @@ export default function SettingsPage() {
               </p>
             </div>
           )}
+        </div>
+
+        {/* Export Trades CSV */}
+        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Export Trades (CSV)</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                Download all transactions as a CSV file for tax reporting or analysis in Excel.
+                Includes date, ticker, side, quantity, price, total, themes, and wash sale flags.
+              </p>
+            </div>
+            <button
+              onClick={handleExportCsv}
+              disabled={exportingCsv}
+              className="shrink-0 ml-6 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {exportingCsv ? (
+                <span className="flex items-center gap-2">
+                  <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                  Exporting...
+                </span>
+              ) : (
+                "Download CSV"
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Refresh Prices */}

@@ -298,6 +298,72 @@ def refresh_prices(db=Depends(get_db)):
     }
 
 
+# ── CSV Export (Trades) ───────────────────────────────────────────────
+
+@app.get("/trades/export-csv")
+def export_trades_csv(db=Depends(get_db)):
+    """Export all trades as a CSV file for tax or analytics purposes."""
+    from fastapi.responses import StreamingResponse
+    import csv, io
+
+    docs = db.collection('trades').stream()
+    trades = []
+    for doc in docs:
+        d = doc.to_dict()
+        if 'date' in d and hasattr(d['date'], 'strftime'):
+            d['date'] = d['date'].strftime('%Y-%m-%d')
+        if 'expiration_date' in d and d.get('expiration_date') and hasattr(d['expiration_date'], 'strftime'):
+            d['expiration_date'] = d['expiration_date'].strftime('%Y-%m-%d')
+        trades.append(d)
+
+    trades.sort(key=lambda t: t.get('date', ''))
+
+    # Fetch asset themes to include in export
+    asset_data = {}
+    for doc in db.collection('asset_prices').stream():
+        ad = doc.to_dict()
+        asset_data[ad.get('ticker')] = {
+            'primary_theme': ad.get('primary_theme', ''),
+            'secondary_theme': ad.get('secondary_theme', ''),
+        }
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'Date', 'Ticker', 'Side', 'Quantity', 'Price', 'Total',
+        'Type', 'Fees', 'Currency', 'Primary Theme', 'Secondary Theme',
+        'Is Wash Sale',
+    ])
+
+    for t in trades:
+        ticker = t.get('ticker', '')
+        qty = t.get('quantity', 0)
+        price = t.get('price', 0)
+        themes = asset_data.get(ticker, {})
+        writer.writerow([
+            t.get('date', ''),
+            ticker,
+            t.get('side', ''),
+            qty,
+            price,
+            round(qty * price, 2),
+            t.get('type', 'Equity'),
+            t.get('fees', 0),
+            t.get('currency', 'USD'),
+            themes.get('primary_theme', ''),
+            themes.get('secondary_theme', ''),
+            'Yes' if t.get('is_wash_sale') else '',
+        ])
+
+    output.seek(0)
+    filename = f"trades_export_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ── Export / Restore Backup ───────────────────────────────────────────
 
 @app.get("/backup/export")
