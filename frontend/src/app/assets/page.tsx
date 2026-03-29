@@ -169,27 +169,12 @@ export default function AssetsPage() {
             </p>
           </div>
           <button
-            onClick={() => {
-              if (assets.length >= 500 && !showAdd) {
-                alert("You have 500+ assets. Consider removing delisted or unused tickers to keep price refreshes reliable.");
-              }
-              setShowAdd(!showAdd);
-            }}
+            onClick={() => setShowAdd(!showAdd)}
             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-md transition-colors"
           >
             {showAdd ? "Cancel" : "+ Add Asset"}
           </button>
         </div>
-
-        {/* Soft cap warning */}
-        {assets.length > 500 && (
-          <div className="p-3 bg-amber-900/20 border border-amber-700/50 rounded-lg">
-            <p className="text-sm text-amber-300">
-              <strong>{assets.length}/500+</strong> assets registered. Yahoo Finance price refreshes may be unreliable above 500 tickers.
-              Consider removing delisted or unused assets via Settings &rarr; Refresh Prices &rarr; remove failed tickers.
-            </p>
-          </div>
-        )}
 
         {/* Add Form */}
         {showAdd && (
