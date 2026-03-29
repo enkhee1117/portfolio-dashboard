@@ -684,9 +684,7 @@ def portfolio_history(period: str = "1y", db=Depends(get_db)):
     """Compute historical portfolio value by replaying trades against price_history."""
     from collections import defaultdict
     from datetime import timedelta
-    import math
 
-    # Determine date range from period
     now = datetime.utcnow()
     period_map = {
         "1m": timedelta(days=30),
@@ -707,41 +705,63 @@ def portfolio_history(period: str = "1y", db=Depends(get_db)):
         if hasattr(dt, 'replace'):
             dt = dt.replace(tzinfo=None)
         d['date'] = dt
-        d['id'] = doc.id
         trades.append(d)
     trades.sort(key=lambda t: t['date'])
 
     if not trades:
         return []
 
-    # Load price_history into a dict: {ticker: {date_str: close_price}}
-    price_docs = db.collection('price_history').stream()
-    prices: dict[str, dict[str, float]] = defaultdict(dict)
-    for doc in price_docs:
-        d = doc.to_dict()
-        ticker = d.get('ticker')
-        date_str = d.get('date')
-        close = d.get('close', 0)
-        if ticker and date_str and close:
-            prices[ticker][date_str] = close
+    # Determine which tickers we ever held
+    held_tickers = set()
+    for t in trades:
+        if t.get('type') == 'Equity':
+            held_tickers.add(t.get('ticker'))
 
-    # Build positions at each sample date
-    # Sample weekly within the period, plus every trade date
-    sample_dates = set()
-
-    # Add weekly samples
+    # Build sample dates: weekly within period
+    sample_dates = []
     d = max(start_date, trades[0]['date'])
     while d <= now:
-        sample_dates.add(d.strftime('%Y-%m-%d'))
+        sample_dates.append(d.strftime('%Y-%m-%d'))
         d += timedelta(days=7)
-    sample_dates.add(now.strftime('%Y-%m-%d'))
+    if not sample_dates or sample_dates[-1] != now.strftime('%Y-%m-%d'):
+        sample_dates.append(now.strftime('%Y-%m-%d'))
 
-    # Add trade dates within period
-    for t in trades:
-        if t['date'] >= start_date:
-            sample_dates.add(t['date'].strftime('%Y-%m-%d'))
+    # Precompute all doc IDs we need: for each sample date + lookback × each ticker
+    # Then batch-get them all in one pass
+    prices: dict[str, float] = {}  # "TICKER_DATE" -> close
 
-    sample_dates = sorted(sample_dates)
+    all_doc_ids = set()
+    for date_str in sample_dates:
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+        for offset in range(6):  # include lookback days
+            lookup = (dt - timedelta(days=offset)).strftime('%Y-%m-%d')
+            for ticker in held_tickers:
+                all_doc_ids.add(f"{ticker}_{lookup}")
+
+    # Firestore get_all supports up to 500 refs per call
+    doc_id_list = list(all_doc_ids)
+    for i in range(0, len(doc_id_list), 400):
+        chunk = doc_id_list[i:i+400]
+        refs = [db.collection('price_history').document(did) for did in chunk]
+        docs = db.get_all(refs)
+        for doc in docs:
+            if doc.exists:
+                d = doc.to_dict()
+                close = d.get('close', 0)
+                if close and close > 0:
+                    prices[doc.id] = close
+
+    def get_price(ticker: str, date_str: str) -> float | None:
+        key = f"{ticker}_{date_str}"
+        if key in prices:
+            return prices[key]
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+        for i in range(1, 6):
+            prev = (dt - timedelta(days=i)).strftime('%Y-%m-%d')
+            prev_key = f"{ticker}_{prev}"
+            if prev_key in prices:
+                return prices[prev_key]
+        return None
 
     # Replay trades and compute portfolio value at each sample date
     positions: dict[str, dict] = defaultdict(lambda: {"quantity": 0.0, "cost_basis": 0.0})
@@ -775,8 +795,7 @@ def portfolio_history(period: str = "1y", db=Depends(get_db)):
         for ticker, pos in positions.items():
             if abs(pos["quantity"]) < 0.0001:
                 continue
-            # Find closest price on or before this date
-            close = _find_price(prices, ticker, date_str)
+            close = get_price(ticker, date_str)
             if close:
                 total_value += pos["quantity"] * close
 
@@ -786,21 +805,6 @@ def portfolio_history(period: str = "1y", db=Depends(get_db)):
         })
 
     return result
-
-
-def _find_price(prices: dict, ticker: str, date_str: str) -> float | None:
-    """Find the closing price for a ticker on or before a given date."""
-    ticker_prices = prices.get(ticker, {})
-    if date_str in ticker_prices:
-        return ticker_prices[date_str]
-    # Look back up to 5 days for weekends/holidays
-    from datetime import datetime, timedelta
-    dt = datetime.strptime(date_str, '%Y-%m-%d')
-    for i in range(1, 6):
-        prev = (dt - timedelta(days=i)).strftime('%Y-%m-%d')
-        if prev in ticker_prices:
-            return ticker_prices[prev]
-    return None
 
 
 # ── CSV Export (Trades) ───────────────────────────────────────────────

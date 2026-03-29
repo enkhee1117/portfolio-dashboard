@@ -127,6 +127,7 @@ export default function PortfolioChart() {
                 axisLine={false}
                 tickLine={false}
                 width={60}
+                domain={['auto', 'auto']}
               />
               <Tooltip
                 formatter={(value: any) => [
