@@ -259,7 +259,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                   colSpan={9}
                   className="px-6 py-8 text-center text-gray-500 italic"
                 >
-                  No positions found.
+                  No positions yet. Import trades from <a href="/settings" className="text-indigo-400 hover:underline">Settings</a> or add one from the Dashboard.
                 </td>
               </tr>
             )}

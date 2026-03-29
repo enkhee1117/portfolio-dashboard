@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { Asset, ThemeLists } from "../types";
+import { useToast } from "../../components/Toast";
 
 export default function AssetsPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -21,6 +22,7 @@ export default function AssetsPage() {
   const [addLoading, setAddLoading] = useState(false);
 
   // Edit modal
+  const toast = useToast();
   const [editing, setEditing] = useState<Asset | null>(null);
   const [editForm, setEditForm] = useState({ ticker: "", primary_theme: "", secondary_theme: "", price: "" });
 
@@ -95,13 +97,13 @@ export default function AssetsPage() {
           price: parseFloat(addForm.price) || 0,
         }),
       });
-      if (res.status === 409) alert("This ticker already exists.");
+      if (res.status === 409) toast.error("This ticker already exists.");
       else if (res.ok) {
         setAddForm({ ticker: "", primary_theme: "", secondary_theme: "", price: "" });
         setShowAdd(false);
         fetchAssets();
-      } else alert("Failed to add asset.");
-    } catch { alert("Error adding asset."); }
+      } else toast.error("Failed to add asset.");
+    } catch { toast.error("Error adding asset."); }
     finally { setAddLoading(false); }
   };
 
@@ -136,12 +138,12 @@ export default function AssetsPage() {
         body: JSON.stringify(body),
       });
       if (res.status === 409) {
-        alert(`Ticker "${newTicker}" already exists.`);
+        toast.error(`Ticker "${newTicker}" already exists.`);
       } else if (res.ok) {
         setEditing(null);
         fetchAssets();
-      } else alert("Failed to update asset.");
-    } catch { alert("Error updating asset."); }
+      } else toast.error("Failed to update asset.");
+    } catch { toast.error("Error updating asset."); }
   };
 
   // Remove from asset list (trade history preserved)
@@ -153,8 +155,8 @@ export default function AssetsPage() {
     try {
       const res = await fetch(`/api/assets/${ticker}`, { method: "DELETE" });
       if (res.ok) setAssets(assets.filter((a) => a.ticker !== ticker));
-      else alert("Failed to remove asset.");
-    } catch { alert("Error removing asset."); }
+      else toast.error("Failed to remove asset.");
+    } catch { toast.error("Error removing asset."); }
   };
 
   return (
@@ -317,7 +319,7 @@ export default function AssetsPage() {
                 {filtered.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-6 py-8 text-center text-gray-500 italic">
-                      No assets found.
+                      No assets found. Add your first asset above or import a portfolio snapshot from <a href="/settings" className="text-indigo-400 hover:underline">Settings</a>.
                     </td>
                   </tr>
                 )}

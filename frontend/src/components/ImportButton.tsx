@@ -1,5 +1,6 @@
 "use client";
 import { useState } from 'react';
+import { useToast } from './Toast';
 
 const FileConfig = {
     accept: ".xlsx, .xls, .csv",
@@ -12,6 +13,7 @@ interface ImportButtonProps {
 
 const ImportButton: React.FC<ImportButtonProps> = ({ onImportSuccess }) => {
     const [uploading, setUploading] = useState(false);
+    const toast = useToast();
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files?.[0]) return;
@@ -28,24 +30,22 @@ const ImportButton: React.FC<ImportButtonProps> = ({ onImportSuccess }) => {
 
             if (res.ok) {
                 const data = await res.json();
-                alert(data.message || "Import successful!");
+                toast.success(data.message || "Import successful!");
                 onImportSuccess();
             } else {
-                alert("Import failed.");
+                toast.error("Import failed.");
             }
         } catch (err) {
             console.error(err);
-            alert("Error uploading file.");
+            toast.error("Error uploading file.");
         } finally {
             setUploading(false);
-            // Reset input
             e.target.value = "";
         }
     };
 
     return (
         <label className={`cursor-pointer inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-
             {uploading ? (
                 <>
                     <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

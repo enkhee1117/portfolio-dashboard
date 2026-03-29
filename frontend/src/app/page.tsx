@@ -5,11 +5,14 @@ import PositionTable from '../components/PositionTable';
 import ManualTradeForm from '../components/ManualTradeForm';
 import ThemeAnalysis from '../components/ThemeAnalysis';
 import { PortfolioSnapshot, ThemeLists } from './types';
+import { useToast } from '../components/Toast';
 
 export default function Home() {
   const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [showManualTrade, setShowManualTrade] = useState(false);
+
+  const toast = useToast();
 
   // Missing themes panel
   const [showMissing, setShowMissing] = useState(false);
@@ -72,7 +75,7 @@ export default function Home() {
   const handleFixTheme = async (ticker: string) => {
     const form = fixForms[ticker];
     if (!form?.primary || !form?.secondary) {
-      alert('Both primary and secondary themes are required.');
+      toast.error('Both primary and secondary themes are required.');
       return;
     }
     setSavingTicker(ticker);
@@ -102,10 +105,10 @@ export default function Home() {
         setFixForms(newForms);
         fetchPortfolio();
       } else {
-        alert('Failed to save themes.');
+        toast.error('Failed to save themes.');
       }
     } catch {
-      alert('Error saving themes.');
+      toast.error('Error saving themes.');
     } finally {
       setSavingTicker(null);
     }
@@ -236,6 +239,30 @@ export default function Home() {
             <datalist id="fix-secondary-themes">
               {themes.secondary.map(t => <option key={t} value={t} />)}
             </datalist>
+          </div>
+        )}
+
+        {/* Welcome banner for new users */}
+        {!loading && activePositions.length === 0 && (
+          <div className="bg-indigo-900/20 border border-indigo-700/50 rounded-xl p-6 text-center">
+            <h3 className="text-lg font-semibold text-white mb-2">Welcome to Portfolio Tracker</h3>
+            <p className="text-sm text-gray-400 mb-4">
+              Get started by importing your trade history or adding your first trade.
+            </p>
+            <div className="flex justify-center gap-3">
+              <a
+                href="/settings"
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-md transition-colors"
+              >
+                Import Data
+              </a>
+              <button
+                onClick={() => setShowManualTrade(true)}
+                className="px-4 py-2 border border-gray-600 hover:bg-gray-800 text-gray-300 text-sm rounded-md transition-colors"
+              >
+                Add First Trade
+              </button>
+            </div>
           </div>
         )}
 

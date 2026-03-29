@@ -2,10 +2,12 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { Trade } from '../types';
+import { useToast } from '../../components/Toast';
 
 export default function TradeHistory() {
     const [trades, setTrades] = useState<Trade[]>([]);
     const [loading, setLoading] = useState(true);
+    const toast = useToast();
     const [filterText, setFilterText] = useState("");
 
     // Sorting state
@@ -69,11 +71,11 @@ export default function TradeHistory() {
             if (res.ok) {
                 setTrades(trades.filter(t => t.id !== id));
             } else {
-                alert("Failed to delete trade");
+                toast.error("Failed to delete trade");
             }
         } catch (err) {
             console.error(err);
-            alert("Error deleting trade");
+            toast.error("Error deleting trade");
         }
     };
 
@@ -103,11 +105,11 @@ export default function TradeHistory() {
                 setTrades(trades.map(t => t.id === updatedTrade.id ? updatedTrade : t));
                 setEditingTrade(null);
             } else {
-                alert("Failed to update trade");
+                toast.error("Failed to update trade");
             }
         } catch (err) {
             console.error(err);
-            alert("Error updating trade");
+            toast.error("Error updating trade");
         }
     };
 
@@ -177,7 +179,7 @@ export default function TradeHistory() {
                             {sortedAndFilteredTrades.length === 0 && !loading && (
                                 <tr>
                                     <td colSpan={8} className="px-6 py-8 text-center text-gray-500 italic">
-                                        No trades found.
+                                        No trades found. Import your trade history from <a href="/settings" className="text-indigo-400 hover:underline">Settings</a> or add trades from the <a href="/" className="text-indigo-400 hover:underline">Dashboard</a>.
                                     </td>
                                 </tr>
                             )}

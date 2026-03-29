@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { Asset, ThemeLists } from "../app/types";
+import { useToast } from "./Toast";
 
 interface ManualTradeFormProps {
   onTradeAdded: () => void;
@@ -25,6 +26,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
   const [showRegister, setShowRegister] = useState(false);
   const [regForm, setRegForm] = useState({ primary_theme: "", secondary_theme: "", price: "" });
   const [regLoading, setRegLoading] = useState(false);
+  const toast = useToast();
 
   // Fetch assets and themes on mount
   useEffect(() => {
@@ -61,7 +63,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
   const handleRegister = async () => {
     const ticker = formData.ticker.toUpperCase();
     if (!regForm.primary_theme || !regForm.secondary_theme) {
-      alert("Both themes are required.");
+      toast.error("Both themes are required.");
       return;
     }
     setRegLoading(true);
@@ -87,10 +89,10 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
         setTickerStatus("registered");
         setShowRegister(false);
       } else {
-        alert("Failed to register asset.");
+        toast.error("Failed to register asset.");
       }
     } catch {
-      alert("Error registering asset.");
+      toast.error("Error registering asset.");
     } finally {
       setRegLoading(false);
     }
@@ -99,7 +101,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (tickerStatus === "unregistered") {
-      alert("Please register this ticker with themes before adding a trade.");
+      toast.error("Please register this ticker with themes before adding a trade.");
       return;
     }
     setLoading(true);
@@ -132,16 +134,16 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
       }
 
       if (res.ok) {
-        alert("Trade added successfully!");
+        toast.success("Trade added successfully!");
         onTradeAdded();
         setFormData({ ...formData, ticker: "", price: "", quantity: "" });
         setTickerStatus("idle");
       } else {
-        alert("Failed to add trade.");
+        toast.error("Failed to add trade.");
       }
     } catch (err) {
       console.error(err);
-      alert("Error adding trade.");
+      toast.error("Error adding trade.");
     } finally {
       setLoading(false);
     }

@@ -2,8 +2,11 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import ImportButton from "../../components/ImportButton";
+import { useToast } from "../../components/Toast";
 
 export default function SettingsPage() {
+  const toast = useToast();
+
   // Refresh status
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const [nextScheduled, setNextScheduled] = useState<string | null>(null);
@@ -84,11 +87,11 @@ export default function SettingsPage() {
     });
     if (res.ok) {
       const data = await res.json();
-      alert(data.message);
+      toast.success(data.message);
       setRenamingTheme(null);
       setRenameValue("");
       fetchThemeSummary();
-    } else alert("Failed to rename theme.");
+    } else toast.error("Failed to rename theme.");
   };
 
   const handleDeleteTheme = async (name: string, field: string) => {
@@ -96,14 +99,14 @@ export default function SettingsPage() {
     const res = await fetch(`/api/themes/${encodeURIComponent(name)}?field=${field}`, { method: "DELETE" });
     if (res.ok) {
       const data = await res.json();
-      alert(data.message);
+      toast.success(data.message);
       fetchThemeSummary();
-    } else alert("Failed to delete theme.");
+    } else toast.error("Failed to delete theme.");
   };
 
   const handleCombine = async () => {
     if (!combineMode || !combineSource || !combineTarget) return;
-    if (combineSource === combineTarget) { alert("Source and target are the same."); return; }
+    if (combineSource === combineTarget) { toast.error("Source and target are the same."); return; }
     if (!confirm(`Merge "${combineSource}" into "${combineTarget}"? All assets with "${combineSource}" will be reassigned.`)) return;
     const res = await fetch("/api/themes/combine", {
       method: "POST",
@@ -112,12 +115,12 @@ export default function SettingsPage() {
     });
     if (res.ok) {
       const data = await res.json();
-      alert(data.message);
+      toast.success(data.message);
       setCombineMode(null);
       setCombineSource("");
       setCombineTarget("");
       fetchThemeSummary();
-    } else alert("Failed to combine themes.");
+    } else toast.error("Failed to combine themes.");
   };
 
   const handleRefreshPrices = async () => {
@@ -155,10 +158,10 @@ export default function SettingsPage() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } else {
-        alert("Failed to export data.");
+        toast.error("Failed to export data.");
       }
     } catch {
-      alert("Error exporting data.");
+      toast.error("Error exporting data.");
     } finally {
       setExporting(false);
     }
@@ -179,10 +182,10 @@ export default function SettingsPage() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } else {
-        alert("Failed to export CSV.");
+        toast.error("Failed to export CSV.");
       }
     } catch {
-      alert("Error exporting CSV.");
+      toast.error("Error exporting CSV.");
     } finally {
       setExportingCsv(false);
     }
@@ -213,10 +216,10 @@ export default function SettingsPage() {
         setRestoreResult(data);
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(`Restore failed: ${err.detail || "Unknown error"}`);
+        toast.error(`Restore failed: ${err.detail || "Unknown error"}`);
       }
     } catch {
-      alert("Error restoring backup.");
+      toast.error("Error restoring backup.");
     } finally {
       setRestoring(false);
       if (restoreInputRef.current) restoreInputRef.current.value = "";
