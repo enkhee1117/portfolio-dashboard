@@ -421,6 +421,139 @@ def delete_asset(ticker: str, db=Depends(get_db)):
     return {"message": f"Asset '{ticker}' deleted successfully."}
 
 
+# ── Theme Management ─────────────────────────────────────────────────
+
+@app.get("/themes/summary")
+def themes_summary(db=Depends(get_db)):
+    """Return all themes with asset counts."""
+    primary: dict[str, int] = {}
+    secondary: dict[str, int] = {}
+    docs = db.collection('asset_prices').stream()
+    for doc in docs:
+        d = doc.to_dict()
+        pt = d.get('primary_theme')
+        st = d.get('secondary_theme')
+        if pt:
+            primary[pt] = primary.get(pt, 0) + 1
+        if st:
+            secondary[st] = secondary.get(st, 0) + 1
+    return {
+        "primary": sorted([{"name": k, "count": v} for k, v in primary.items()], key=lambda x: -x["count"]),
+        "secondary": sorted([{"name": k, "count": v} for k, v in secondary.items()], key=lambda x: -x["count"]),
+    }
+
+
+@app.put("/themes/rename")
+def rename_theme(body: dict, db=Depends(get_db)):
+    """Rename a theme across all assets. Body: {old_name, new_name, field: primary|secondary|both}"""
+    old_name = body.get("old_name", "").strip()
+    new_name = body.get("new_name", "").strip()
+    field = body.get("field", "both")
+
+    if not old_name or not new_name:
+        raise HTTPException(status_code=400, detail="old_name and new_name are required.")
+    if old_name == new_name:
+        return {"message": "Names are the same.", "updated": 0}
+
+    docs = db.collection('asset_prices').stream()
+    batch = db.batch()
+    batch_count = 0
+    updated = 0
+
+    for doc in docs:
+        d = doc.to_dict()
+        changes = {}
+        if field in ("primary", "both") and d.get('primary_theme') == old_name:
+            changes['primary_theme'] = new_name
+        if field in ("secondary", "both") and d.get('secondary_theme') == old_name:
+            changes['secondary_theme'] = new_name
+        if changes:
+            changes['last_updated'] = datetime.utcnow()
+            batch.update(doc.reference, changes)
+            batch_count += 1
+            updated += 1
+            if batch_count >= 400:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+
+    if batch_count > 0:
+        batch.commit()
+
+    return {"message": f"Renamed '{old_name}' to '{new_name}'. {updated} assets updated.", "updated": updated}
+
+
+@app.post("/themes/combine")
+def combine_themes(body: dict, db=Depends(get_db)):
+    """Merge source theme into target. Body: {source, target, field: primary|secondary|both}"""
+    source = body.get("source", "").strip()
+    target = body.get("target", "").strip()
+    field = body.get("field", "both")
+
+    if not source or not target:
+        raise HTTPException(status_code=400, detail="source and target are required.")
+    if source == target:
+        return {"message": "Source and target are the same.", "updated": 0}
+
+    docs = db.collection('asset_prices').stream()
+    batch = db.batch()
+    batch_count = 0
+    updated = 0
+
+    for doc in docs:
+        d = doc.to_dict()
+        changes = {}
+        if field in ("primary", "both") and d.get('primary_theme') == source:
+            changes['primary_theme'] = target
+        if field in ("secondary", "both") and d.get('secondary_theme') == source:
+            changes['secondary_theme'] = target
+        if changes:
+            changes['last_updated'] = datetime.utcnow()
+            batch.update(doc.reference, changes)
+            batch_count += 1
+            updated += 1
+            if batch_count >= 400:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+
+    if batch_count > 0:
+        batch.commit()
+
+    return {"message": f"Combined '{source}' into '{target}'. {updated} assets updated.", "updated": updated}
+
+
+@app.delete("/themes/{name}")
+def delete_theme(name: str, field: str = "both", db=Depends(get_db)):
+    """Remove a theme from all assets (sets to empty string)."""
+    docs = db.collection('asset_prices').stream()
+    batch = db.batch()
+    batch_count = 0
+    updated = 0
+
+    for doc in docs:
+        d = doc.to_dict()
+        changes = {}
+        if field in ("primary", "both") and d.get('primary_theme') == name:
+            changes['primary_theme'] = ""
+        if field in ("secondary", "both") and d.get('secondary_theme') == name:
+            changes['secondary_theme'] = ""
+        if changes:
+            changes['last_updated'] = datetime.utcnow()
+            batch.update(doc.reference, changes)
+            batch_count += 1
+            updated += 1
+            if batch_count >= 400:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+
+    if batch_count > 0:
+        batch.commit()
+
+    return {"message": f"Deleted theme '{name}'. {updated} assets updated.", "updated": updated}
+
+
 # ── Price Refresh (Yahoo Finance) ─────────────────────────────────────
 
 @app.post("/assets/refresh-prices")

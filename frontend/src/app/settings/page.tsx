@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import ImportButton from "../../components/ImportButton";
 
 export default function SettingsPage() {
@@ -54,6 +54,71 @@ export default function SettingsPage() {
     restored: { trades: number; assets: number };
   } | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
+
+  // Theme management
+  const [themeSummary, setThemeSummary] = useState<{
+    primary: { name: string; count: number }[];
+    secondary: { name: string; count: number }[];
+  }>({ primary: [], secondary: [] });
+  const [renamingTheme, setRenamingTheme] = useState<{ name: string; field: string } | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [combineMode, setCombineMode] = useState<{ field: "primary" | "secondary" } | null>(null);
+  const [combineSource, setCombineSource] = useState("");
+  const [combineTarget, setCombineTarget] = useState("");
+
+  const fetchThemeSummary = async () => {
+    try {
+      const res = await fetch("/api/themes/summary");
+      if (res.ok) setThemeSummary(await res.json());
+    } catch {}
+  };
+
+  useEffect(() => { fetchThemeSummary(); }, []);
+
+  const handleRenameTheme = async () => {
+    if (!renamingTheme || !renameValue.trim()) return;
+    const res = await fetch("/api/themes/rename", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ old_name: renamingTheme.name, new_name: renameValue.trim(), field: renamingTheme.field }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      alert(data.message);
+      setRenamingTheme(null);
+      setRenameValue("");
+      fetchThemeSummary();
+    } else alert("Failed to rename theme.");
+  };
+
+  const handleDeleteTheme = async (name: string, field: string) => {
+    if (!confirm(`Remove "${name}" from all assets? Affected assets will show as "Unassigned".`)) return;
+    const res = await fetch(`/api/themes/${encodeURIComponent(name)}?field=${field}`, { method: "DELETE" });
+    if (res.ok) {
+      const data = await res.json();
+      alert(data.message);
+      fetchThemeSummary();
+    } else alert("Failed to delete theme.");
+  };
+
+  const handleCombine = async () => {
+    if (!combineMode || !combineSource || !combineTarget) return;
+    if (combineSource === combineTarget) { alert("Source and target are the same."); return; }
+    if (!confirm(`Merge "${combineSource}" into "${combineTarget}"? All assets with "${combineSource}" will be reassigned.`)) return;
+    const res = await fetch("/api/themes/combine", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: combineSource, target: combineTarget, field: combineMode.field }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      alert(data.message);
+      setCombineMode(null);
+      setCombineSource("");
+      setCombineTarget("");
+      fetchThemeSummary();
+    } else alert("Failed to combine themes.");
+  };
 
   const handleRefreshPrices = async () => {
     setRefreshing(true);
@@ -241,6 +306,107 @@ export default function SettingsPage() {
               </p>
             </div>
           )}
+        </div>
+
+        {/* Theme Management */}
+        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+          <h3 className="text-lg font-semibold text-white mb-1">Theme Management</h3>
+          <p className="text-sm text-gray-400 mb-5">
+            Rename, delete, or combine investment themes across all assets.
+          </p>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Primary Themes */}
+            {(["primary", "secondary"] as const).map((field) => {
+              const themes = field === "primary" ? themeSummary.primary : themeSummary.secondary;
+              const label = field === "primary" ? "Primary" : "Secondary";
+              return (
+                <div key={field}>
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="text-sm font-semibold text-gray-300">{label} Themes ({themes.length})</h4>
+                    <button
+                      onClick={() => {
+                        if (combineMode?.field === field) setCombineMode(null);
+                        else { setCombineMode({ field }); setCombineSource(""); setCombineTarget(""); }
+                      }}
+                      className={`text-xs px-2 py-1 rounded transition-colors ${
+                        combineMode?.field === field
+                          ? "bg-indigo-600 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-700"
+                      }`}
+                    >
+                      {combineMode?.field === field ? "Cancel Combine" : "Combine"}
+                    </button>
+                  </div>
+
+                  {/* Combine UI */}
+                  {combineMode?.field === field && (
+                    <div className="mb-3 p-3 bg-indigo-900/20 border border-indigo-700/50 rounded-lg">
+                      <p className="text-xs text-indigo-300 mb-2">Merge one theme into another:</p>
+                      <div className="flex gap-2 items-center">
+                        <select value={combineSource} onChange={(e) => setCombineSource(e.target.value)} className="bg-gray-700 text-white px-2 py-1.5 rounded border border-gray-600 text-xs flex-1">
+                          <option value="">Source (will be removed)</option>
+                          {themes.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.count})</option>)}
+                        </select>
+                        <span className="text-gray-500 text-xs">&rarr;</span>
+                        <select value={combineTarget} onChange={(e) => setCombineTarget(e.target.value)} className="bg-gray-700 text-white px-2 py-1.5 rounded border border-gray-600 text-xs flex-1">
+                          <option value="">Target (will keep)</option>
+                          {themes.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.count})</option>)}
+                        </select>
+                        <button onClick={handleCombine} disabled={!combineSource || !combineTarget} className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs disabled:opacity-50">
+                          Merge
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Theme list */}
+                  <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-700">
+                    {themes.length === 0 ? (
+                      <p className="px-3 py-4 text-center text-gray-500 text-xs italic">No themes</p>
+                    ) : (
+                      themes.map((t) => (
+                        <div key={t.name} className="flex items-center justify-between px-3 py-1.5 border-b border-gray-700/50 last:border-0 hover:bg-gray-700/30 group">
+                          {renamingTheme?.name === t.name && renamingTheme?.field === field ? (
+                            <div className="flex items-center gap-2 flex-1">
+                              <input
+                                type="text"
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleRenameTheme(); if (e.key === "Escape") setRenamingTheme(null); }}
+                                className="bg-gray-700 text-white px-2 py-0.5 rounded border border-indigo-500 text-xs flex-1 focus:outline-none"
+                                autoFocus
+                              />
+                              <button onClick={handleRenameTheme} className="text-green-400 hover:text-green-300 text-xs">Save</button>
+                              <button onClick={() => setRenamingTheme(null)} className="text-gray-400 hover:text-gray-300 text-xs">Cancel</button>
+                            </div>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => { setRenamingTheme({ name: t.name, field }); setRenameValue(t.name); }}
+                                className="text-xs text-gray-200 hover:text-white text-left flex-1"
+                                title="Click to rename"
+                              >
+                                {t.name}
+                              </button>
+                              <span className="text-[10px] text-gray-500 mr-2">{t.count}</span>
+                              <button
+                                onClick={() => handleDeleteTheme(t.name, field)}
+                                className="text-gray-600 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Remove theme"
+                              >
+                                &times;
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Export Trades CSV */}
