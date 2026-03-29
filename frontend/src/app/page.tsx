@@ -450,6 +450,68 @@ export default function Home() {
           </div>
         )}
 
+        {/* RSI Signals */}
+        {assets.filter(a => a.rsi != null).length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Overbought */}
+            <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+              <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-widest mb-1">Overbought (RSI &gt; 70)</h3>
+              <p className="text-xs text-gray-500 mb-3">May be due for a pullback</p>
+              <div className="space-y-1.5">
+                {assets
+                  .filter(a => a.rsi != null && a.rsi! > 70)
+                  .sort((a, b) => (b.rsi || 0) - (a.rsi || 0))
+                  .slice(0, 10)
+                  .map(a => (
+                    <div key={a.ticker} className="flex items-center justify-between py-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-medium text-sm">{a.ticker}</span>
+                        <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                          <div className="h-full bg-amber-500 rounded-full" style={{ width: `${a.rsi}%` }} />
+                        </div>
+                        <span className="text-amber-400 text-sm font-medium w-10 text-right">{a.rsi}</span>
+                      </div>
+                    </div>
+                  ))}
+                {assets.filter(a => a.rsi != null && a.rsi! > 70).length === 0 && (
+                  <p className="text-gray-500 text-xs italic">No overbought assets</p>
+                )}
+              </div>
+            </div>
+
+            {/* Oversold */}
+            <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+              <h3 className="text-sm font-semibold text-cyan-400 uppercase tracking-widest mb-1">Oversold (RSI &lt; 30)</h3>
+              <p className="text-xs text-gray-500 mb-3">May be a buying opportunity</p>
+              <div className="space-y-1.5">
+                {assets
+                  .filter(a => a.rsi != null && a.rsi! < 30)
+                  .sort((a, b) => (a.rsi || 0) - (b.rsi || 0))
+                  .slice(0, 10)
+                  .map(a => (
+                    <div key={a.ticker} className="flex items-center justify-between py-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-medium text-sm">{a.ticker}</span>
+                        <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                          <div className="h-full bg-cyan-500 rounded-full" style={{ width: `${a.rsi}%` }} />
+                        </div>
+                        <span className="text-cyan-400 text-sm font-medium w-10 text-right">{a.rsi}</span>
+                      </div>
+                    </div>
+                  ))}
+                {assets.filter(a => a.rsi != null && a.rsi! < 30).length === 0 && (
+                  <p className="text-gray-500 text-xs italic">No oversold assets</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </main>

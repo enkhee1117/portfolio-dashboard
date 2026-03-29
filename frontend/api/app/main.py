@@ -49,6 +49,60 @@ def fetch_and_store_ticker_prices(db, ticker: str, start: str = "2020-01-01"):
         return 0
 
 
+def compute_rsi(closes: list[float], period: int = 14) -> float | None:
+    """Compute RSI from a list of closing prices (most recent last). Returns None if not enough data."""
+    if len(closes) < period + 1:
+        return None
+    # Use last (period + 1) prices to get (period) changes
+    recent = closes[-(period + 1):]
+    changes = [recent[i + 1] - recent[i] for i in range(len(recent) - 1)]
+    gains = [c if c > 0 else 0 for c in changes]
+    losses = [-c if c < 0 else 0 for c in changes]
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return round(100 - (100 / (1 + rs)), 2)
+
+
+def compute_and_store_rsi(db):
+    """Compute RSI for all tickers from price_series and store in asset_prices."""
+    docs = db.collection('price_series').stream()
+    batch = db.batch()
+    batch_count = 0
+    computed = 0
+
+    for doc in docs:
+        d = doc.to_dict()
+        ticker = d.get('ticker', doc.id)
+        prices_map = d.get('prices', {})
+        if not prices_map:
+            continue
+
+        # Sort dates and extract closes
+        sorted_dates = sorted(prices_map.keys())
+        closes = [prices_map[dt] for dt in sorted_dates]
+
+        rsi = compute_rsi(closes)
+        if rsi is not None:
+            doc_ref = db.collection('asset_prices').document(ticker)
+            batch.update(doc_ref, {"rsi": rsi})
+            batch_count += 1
+            computed += 1
+
+            if batch_count >= 400:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+
+    if batch_count > 0:
+        batch.commit()
+
+    logger.info(f"RSI computed for {computed} tickers")
+    return computed
+
+
 def get_tickers_last_price_date(db) -> dict[str, str]:
     """Return dict of ticker -> last date in price_series (YYYY-MM-DD)."""
     result = {}
@@ -236,8 +290,9 @@ def _scheduled_refresh():
             logger.info("No price updates — market may be closed (holiday)")
             return
         logger.info(f"Scheduled refresh result: {result['updated']} updated, {len(result['failed'])} failed")
-        # Recompute today's portfolio snapshot with updated prices
+        # Recompute RSI and portfolio snapshot
         db = get_db()
+        compute_and_store_rsi(db)
         calculator.compute_and_store_snapshot(db)
     except Exception as e:
         logger.error(f"Scheduled refresh error: {e}")
@@ -699,6 +754,12 @@ def delete_theme(name: str, field: str = "both", db=Depends(get_db)):
 def refresh_prices():
     """Manual trigger for price refresh (uses shared _run_price_refresh)."""
     result = _run_price_refresh()
+    # Compute RSI from price_series after refresh
+    try:
+        db = get_db()
+        compute_and_store_rsi(db)
+    except Exception:
+        pass
     return {
         "message": f"Updated {result['updated']} prices, {len(result['failed'])} failed.",
         "updated": result["updated"],

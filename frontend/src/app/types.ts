@@ -37,6 +37,7 @@ export interface Asset {
     previous_close?: number | null;
     daily_change?: number | null;
     daily_change_pct?: number | null;
+    rsi?: number | null;
 }
 
 export interface ThemeLists {

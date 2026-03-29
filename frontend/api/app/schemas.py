@@ -66,6 +66,7 @@ class Asset(AssetBase):
     previous_close: Optional[float] = None
     daily_change: Optional[float] = None
     daily_change_pct: Optional[float] = None
+    rsi: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 
