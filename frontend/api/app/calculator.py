@@ -1,6 +1,9 @@
 from . import schemas
 from collections import defaultdict
 from datetime import datetime
+import logging
+
+logger = logging.getLogger("portfolio")
 
 def calculate_portfolio(db):
     trades_docs = db.collection('trades').stream()
@@ -82,3 +85,74 @@ def calculate_portfolio(db):
                 "secondary_theme": s_theme
             })
     return results
+
+
+def compute_and_store_snapshot(db, date_str: str | None = None):
+    """
+    Compute portfolio value and store as a daily snapshot.
+    If date_str is None, uses today's date.
+    Returns the snapshot dict.
+    """
+    if date_str is None:
+        date_str = datetime.utcnow().strftime('%Y-%m-%d')
+
+    positions = calculate_portfolio(db)
+    total_value = sum(p["market_value"] for p in positions)
+
+    # Strip datetime objects for Firestore storage — keep only serializable fields
+    positions_data = []
+    for p in positions:
+        positions_data.append({
+            "ticker": p["ticker"],
+            "quantity": p["quantity"],
+            "average_price": p["average_price"],
+            "current_price": p["current_price"],
+            "market_value": p["market_value"],
+            "unrealized_pnl": p["unrealized_pnl"],
+            "realized_pnl": p["realized_pnl"],
+            "primary_theme": p.get("primary_theme"),
+            "secondary_theme": p.get("secondary_theme"),
+        })
+
+    snapshot = {
+        "date": date_str,
+        "total_value": round(total_value, 2),
+        "positions": positions_data,
+        "computed_at": datetime.utcnow(),
+    }
+
+    db.collection('portfolio_snapshots').document(date_str).set(snapshot)
+    logger.info(f"Snapshot stored for {date_str}: ${total_value:,.2f} ({len(positions_data)} positions)")
+
+    return snapshot
+
+
+def get_cached_portfolio(db):
+    """
+    Read today's snapshot if it exists and has positions.
+    Otherwise compute fresh (and try to store).
+    """
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+
+    try:
+        doc = db.collection('portfolio_snapshots').document(today).get()
+        if doc.exists:
+            d = doc.to_dict()
+            positions = d.get('positions', [])
+            if positions:  # Only use cache if positions were stored
+                for p in positions:
+                    p['date'] = datetime.utcnow().replace(tzinfo=None)
+                return positions
+    except Exception:
+        pass
+
+    # No valid snapshot — compute fresh
+    positions = calculate_portfolio(db)
+
+    # Try to store snapshot (best-effort, don't fail if it errors)
+    try:
+        compute_and_store_snapshot(db, today)
+    except Exception:
+        pass
+
+    return positions

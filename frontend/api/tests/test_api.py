@@ -51,11 +51,21 @@ def make_mock_db(trades=None, asset_prices=None):
     prices_col = MagicMock()
     prices_col.stream.return_value = asset_prices
 
+    # portfolio_snapshots — return non-existing docs by default
+    snapshots_col = MagicMock()
+    no_doc = MagicMock()
+    no_doc.exists = False
+    no_doc.to_dict.return_value = {}
+    snapshots_col.document.return_value.get.return_value = no_doc
+    snapshots_col.stream.return_value = []
+
     def _collection(name):
         if name == "trades":
             return trades_col
         if name == "asset_prices":
             return prices_col
+        if name == "portfolio_snapshots":
+            return snapshots_col
         return MagicMock()
 
     db.collection.side_effect = _collection

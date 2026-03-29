@@ -133,6 +133,9 @@ def _scheduled_refresh():
     try:
         result = _run_price_refresh()
         logger.info(f"Scheduled refresh result: {result['updated']} updated, {len(result['failed'])} failed")
+        # Recompute today's portfolio snapshot with updated prices
+        db = get_db()
+        calculator.compute_and_store_snapshot(db)
     except Exception as e:
         logger.error(f"Scheduled refresh error: {e}")
 
@@ -211,7 +214,7 @@ async def import_excel(file: UploadFile = File(...), skip_dedup: bool = False, d
 
 @app.get("/portfolio", response_model=list[schemas.PortfolioSnapshot])
 def get_portfolio(db = Depends(get_db)):
-    data = calculator.calculate_portfolio(db)
+    data = calculator.get_cached_portfolio(db)
     portfolios = []
     for i, item in enumerate(data):
         item['id'] = str(i)
@@ -253,7 +256,13 @@ def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(g
         
     from . import wash_sales
     wash_sales.detect_wash_sales(all_trades, db)
-    
+
+    # Recompute today's snapshot
+    try:
+        calculator.compute_and_store_snapshot(db)
+    except Exception:
+        pass
+
     trade_data['id'] = doc_ref.id
     return schemas.Trade(**trade_data)
 
@@ -272,6 +281,12 @@ def delete_trade(trade_id: str, db = Depends(get_db)):
         
     from . import wash_sales
     wash_sales.detect_wash_sales(all_trades, db)
+
+    try:
+        calculator.compute_and_store_snapshot(db)
+    except Exception:
+        pass
+
     return {"message": "Trade deleted successfully"}
 
 @app.put("/trades/{trade_id}", response_model=schemas.Trade)
@@ -296,7 +311,12 @@ def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)
         re_run_ticker(old_ticker)
         
     re_run_ticker(trade.ticker)
-    
+
+    try:
+        calculator.compute_and_store_snapshot(db)
+    except Exception:
+        pass
+
     trade_data['id'] = trade_id
     if hasattr(trade_data['date'], 'replace'):
         trade_data['date'] = trade_data['date'].replace(tzinfo=None)
@@ -671,9 +691,112 @@ def backfill_history(db=Depends(get_db)):
     if batch_count > 0:
         batch.commit()
 
+    # --- Phase 2: Backfill portfolio snapshots at weekly intervals ---
+    logger.info("Backfilling portfolio snapshots...")
+    from collections import defaultdict
+
+    # Reload trades sorted by date
+    trades_docs2 = db.collection('trades').stream()
+    trades = []
+    for doc in trades_docs2:
+        d = doc.to_dict()
+        dt = d.get('date')
+        if hasattr(dt, 'replace'):
+            dt = dt.replace(tzinfo=None)
+        d['date'] = dt
+        trades.append(d)
+    trades.sort(key=lambda t: t['date'])
+
+    # Build weekly sample dates from earliest trade to now
+    sample_dates = []
+    if trades:
+        d = trades[0]['date']
+        now = datetime.utcnow()
+        while d <= now:
+            sample_dates.append(d.strftime('%Y-%m-%d'))
+            d += timedelta(days=7)
+        sample_dates.append(now.strftime('%Y-%m-%d'))
+
+    # Load ALL price_history close prices into memory for fast lookup
+    # (we just wrote them, so they're fresh)
+    price_cache: dict[str, float] = {}
+    ph_docs = db.collection('price_history').stream()
+    for doc in ph_docs:
+        dd = doc.to_dict()
+        close = dd.get('close', 0)
+        if close and close > 0:
+            price_cache[doc.id] = close
+
+    def find_price(ticker, date_str):
+        key = f"{ticker}_{date_str}"
+        if key in price_cache:
+            return price_cache[key]
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+        for i in range(1, 6):
+            prev = (dt - timedelta(days=i)).strftime('%Y-%m-%d')
+            if f"{ticker}_{prev}" in price_cache:
+                return price_cache[f"{ticker}_{prev}"]
+        return None
+
+    # Replay trades and store snapshots
+    positions = defaultdict(lambda: {"quantity": 0.0, "cost_basis": 0.0})
+    trade_idx = 0
+    snap_batch = db.batch()
+    snap_count = 0
+    snapshots_written = 0
+
+    for date_str in sample_dates:
+        while trade_idx < len(trades) and trades[trade_idx]['date'].strftime('%Y-%m-%d') <= date_str:
+            t = trades[trade_idx]
+            ticker = t.get('ticker')
+            if t.get('type') == 'Equity':
+                qty = t.get('quantity', 0)
+                price = t.get('price', 0)
+                if t.get('side') == 'Buy':
+                    cur = positions[ticker]
+                    new_qty = cur["quantity"] + qty
+                    if new_qty > 0:
+                        cur["cost_basis"] = ((cur["quantity"] * cur["cost_basis"]) + (qty * price)) / new_qty
+                    cur["quantity"] = new_qty
+                elif t.get('side') == 'Sell':
+                    positions[ticker]["quantity"] -= qty
+                    if abs(positions[ticker]["quantity"]) < 0.0001:
+                        positions[ticker] = {"quantity": 0.0, "cost_basis": 0.0}
+            trade_idx += 1
+
+        total_value = 0.0
+        for ticker, pos in positions.items():
+            if abs(pos["quantity"]) < 0.0001:
+                continue
+            cp = find_price(ticker, date_str)
+            if cp:
+                total_value += pos["quantity"] * cp
+
+        snap_batch.set(db.collection('portfolio_snapshots').document(date_str), {
+            "date": date_str,
+            "total_value": round(total_value, 2),
+            "positions": [],  # Skip full position detail for historical (saves storage)
+            "computed_at": datetime.utcnow(),
+        })
+        snap_count += 1
+        snapshots_written += 1
+        if snap_count >= 400:
+            snap_batch.commit()
+            snap_batch = db.batch()
+            snap_count = 0
+
+    if snap_count > 0:
+        snap_batch.commit()
+
+    # Also store today's full snapshot
+    calculator.compute_and_store_snapshot(db)
+
+    logger.info(f"Backfilled {snapshots_written} portfolio snapshots")
+
     return {
-        "message": f"Backfilled {written} price records for {len(tickers)} tickers from {start_str}.",
+        "message": f"Backfilled {written} price records and {snapshots_written} portfolio snapshots.",
         "written": written,
+        "snapshots": snapshots_written,
         "tickers": len(tickers),
         "failed": failed_tickers,
     }
@@ -681,8 +804,7 @@ def backfill_history(db=Depends(get_db)):
 
 @app.get("/portfolio/history")
 def portfolio_history(period: str = "1y", db=Depends(get_db)):
-    """Compute historical portfolio value by replaying trades against price_history."""
-    from collections import defaultdict
+    """Read precomputed portfolio snapshots for the chart."""
     from datetime import timedelta
 
     now = datetime.utcnow()
@@ -694,116 +816,21 @@ def portfolio_history(period: str = "1y", db=Depends(get_db)):
         "all": timedelta(days=365 * 10),
     }
     delta = period_map.get(period, timedelta(days=365))
-    start_date = now - delta
+    start_str = (now - delta).strftime('%Y-%m-%d')
 
-    # Load all trades sorted by date
-    trades_docs = db.collection('trades').stream()
-    trades = []
-    for doc in trades_docs:
-        d = doc.to_dict()
-        dt = d.get('date')
-        if hasattr(dt, 'replace'):
-            dt = dt.replace(tzinfo=None)
-        d['date'] = dt
-        trades.append(d)
-    trades.sort(key=lambda t: t['date'])
-
-    if not trades:
-        return []
-
-    # Determine which tickers we ever held
-    held_tickers = set()
-    for t in trades:
-        if t.get('type') == 'Equity':
-            held_tickers.add(t.get('ticker'))
-
-    # Build sample dates: weekly within period
-    sample_dates = []
-    d = max(start_date, trades[0]['date'])
-    while d <= now:
-        sample_dates.append(d.strftime('%Y-%m-%d'))
-        d += timedelta(days=7)
-    if not sample_dates or sample_dates[-1] != now.strftime('%Y-%m-%d'):
-        sample_dates.append(now.strftime('%Y-%m-%d'))
-
-    # Precompute all doc IDs we need: for each sample date + lookback × each ticker
-    # Then batch-get them all in one pass
-    prices: dict[str, float] = {}  # "TICKER_DATE" -> close
-
-    all_doc_ids = set()
-    for date_str in sample_dates:
-        dt = datetime.strptime(date_str, '%Y-%m-%d')
-        for offset in range(6):  # include lookback days
-            lookup = (dt - timedelta(days=offset)).strftime('%Y-%m-%d')
-            for ticker in held_tickers:
-                all_doc_ids.add(f"{ticker}_{lookup}")
-
-    # Firestore get_all supports up to 500 refs per call
-    doc_id_list = list(all_doc_ids)
-    for i in range(0, len(doc_id_list), 400):
-        chunk = doc_id_list[i:i+400]
-        refs = [db.collection('price_history').document(did) for did in chunk]
-        docs = db.get_all(refs)
-        for doc in docs:
-            if doc.exists:
-                d = doc.to_dict()
-                close = d.get('close', 0)
-                if close and close > 0:
-                    prices[doc.id] = close
-
-    def get_price(ticker: str, date_str: str) -> float | None:
-        key = f"{ticker}_{date_str}"
-        if key in prices:
-            return prices[key]
-        dt = datetime.strptime(date_str, '%Y-%m-%d')
-        for i in range(1, 6):
-            prev = (dt - timedelta(days=i)).strftime('%Y-%m-%d')
-            prev_key = f"{ticker}_{prev}"
-            if prev_key in prices:
-                return prices[prev_key]
-        return None
-
-    # Replay trades and compute portfolio value at each sample date
-    positions: dict[str, dict] = defaultdict(lambda: {"quantity": 0.0, "cost_basis": 0.0})
-    trade_idx = 0
+    # Read from portfolio_snapshots collection — sorted by date
+    docs = db.collection('portfolio_snapshots').stream()
     result = []
+    for doc in docs:
+        d = doc.to_dict()
+        date_str = d.get('date', doc.id)
+        if date_str >= start_str:
+            result.append({
+                "date": date_str,
+                "value": round(d.get('total_value', 0), 2),
+            })
 
-    for date_str in sample_dates:
-        # Process all trades up to this date
-        while trade_idx < len(trades) and trades[trade_idx]['date'].strftime('%Y-%m-%d') <= date_str:
-            t = trades[trade_idx]
-            ticker = t.get('ticker')
-            if t.get('type') == 'Equity':
-                qty = t.get('quantity', 0)
-                price = t.get('price', 0)
-                if t.get('side') == 'Buy':
-                    cur_qty = positions[ticker]["quantity"]
-                    cur_cost = positions[ticker]["cost_basis"]
-                    new_qty = cur_qty + qty
-                    if new_qty > 0:
-                        positions[ticker]["cost_basis"] = ((cur_qty * cur_cost) + (qty * price)) / new_qty
-                    positions[ticker]["quantity"] = new_qty
-                elif t.get('side') == 'Sell':
-                    positions[ticker]["quantity"] -= qty
-                    if abs(positions[ticker]["quantity"]) < 0.0001:
-                        positions[ticker]["quantity"] = 0.0
-                        positions[ticker]["cost_basis"] = 0.0
-            trade_idx += 1
-
-        # Compute portfolio value at this date
-        total_value = 0.0
-        for ticker, pos in positions.items():
-            if abs(pos["quantity"]) < 0.0001:
-                continue
-            close = get_price(ticker, date_str)
-            if close:
-                total_value += pos["quantity"] * close
-
-        result.append({
-            "date": date_str,
-            "value": round(total_value, 2),
-        })
-
+    result.sort(key=lambda x: x['date'])
     return result
 
 
