@@ -246,17 +246,17 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                     ${pos.current_price.toFixed(2)}
                   </td>
                   <td className="px-3 py-2.5 text-right text-white font-medium">
-                    ${pos.market_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    ${pos.market_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td
                     className={`px-3 py-2.5 text-right font-medium ${pos.unrealized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}
                   >
-                    ${pos.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    ${pos.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td
                     className={`px-3 py-2.5 text-right font-medium ${pos.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}
                   >
-                    ${pos.realized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    ${pos.realized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
               );
@@ -328,13 +328,13 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                   <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
                     <p className="text-[10px] text-gray-500 uppercase tracking-wider">Unrealized</p>
                     <p className={`text-sm font-bold mt-0.5 ${selectedPosition.unrealized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      ${selectedPosition.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      ${selectedPosition.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
                   </div>
                   <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
                     <p className="text-[10px] text-gray-500 uppercase tracking-wider">Realized</p>
                     <p className={`text-sm font-bold mt-0.5 ${selectedPosition.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      ${selectedPosition.realized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      ${selectedPosition.realized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
                   </div>
                 </div>
@@ -382,7 +382,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                           ${t.price.toFixed(2)}
                         </td>
                         <td className="px-3 py-2 text-right text-white font-medium">
-                          ${(t.quantity * t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          ${(t.quantity * t.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                         <td className="px-3 py-2 text-right text-gray-400">
                           {t.runningQty.toLocaleString()}

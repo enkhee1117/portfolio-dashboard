@@ -295,7 +295,7 @@ export default function AssetsPage() {
                       </button>
                     </td>
                     <td className="px-4 py-2.5 text-right text-gray-300">
-                      ${asset.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      ${asset.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       {asset.daily_change_pct != null ? (

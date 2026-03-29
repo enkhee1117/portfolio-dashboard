@@ -470,12 +470,12 @@ export default function SettingsPage() {
             <button
               onClick={handleRefreshPrices}
               disabled={refreshing}
-              className="shrink-0 ml-6 px-5 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              className="shrink-0 ml-6 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
               {refreshing ? (
                 <span className="flex items-center gap-2">
                   <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                  Refreshing...
+                  Fetching prices...
                 </span>
               ) : (
                 "Manual Refresh"
@@ -485,7 +485,9 @@ export default function SettingsPage() {
 
           {refreshResult && (
             <div className="mt-4 p-4 bg-gray-900/50 rounded-lg border border-gray-700">
-              <p className="text-sm text-green-400 font-medium">{refreshResult.message}</p>
+              <p className="text-sm text-green-400 font-medium">
+                {refreshResult.updated} of {refreshResult.updated + refreshResult.failed.length} prices updated successfully
+              </p>
               {refreshResult.failed.length > 0 && (
                 <div className="mt-3">
                   <p className="text-xs text-red-400 font-medium mb-2">

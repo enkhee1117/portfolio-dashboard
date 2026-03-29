@@ -137,25 +137,25 @@ export default function Home() {
           <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
             <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest">Net Liquidity</h3>
             <p className="mt-2 text-2xl font-bold text-white">
-              ${totalMarketValue.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+              ${totalMarketValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
           <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
             <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest">Total P&L</h3>
             <p className={`mt-2 text-2xl font-bold ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              ${totalPnL.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+              ${totalPnL.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
           <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
             <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest">Unrealized</h3>
             <p className={`mt-2 text-2xl font-bold ${totalUnrealized >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              ${totalUnrealized.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+              ${totalUnrealized.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
           <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
             <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest">Realized</h3>
             <p className={`mt-2 text-2xl font-bold ${totalRealized >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              ${totalRealized.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+              ${totalRealized.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
         </div>
@@ -200,7 +200,7 @@ export default function Home() {
                   >
                     <span className="text-white font-medium w-20 shrink-0">{pos.ticker}</span>
                     <span className="text-gray-500 text-xs w-24 shrink-0">
-                      ${pos.market_value.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                      ${pos.market_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </span>
                     <input
                       type="text"

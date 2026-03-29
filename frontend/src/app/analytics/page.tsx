@@ -151,7 +151,7 @@ export default function AnalyticsPage() {
             />
             <Tooltip
               formatter={(value: any) => [
-                `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 0 })} (${totalValue > 0 ? ((Number(value) / totalValue) * 100).toFixed(1) : 0}%)`,
+                `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} (${totalValue > 0 ? ((Number(value) / totalValue) * 100).toFixed(1) : 0}%)`,
                 "Exposure",
               ]}
               contentStyle={{
@@ -258,7 +258,7 @@ export default function AnalyticsPage() {
                 <h3 className="text-lg font-semibold text-white">{selectedLabel}</h3>
                 <p className="text-xs text-gray-400">
                   {selectedStocks.length} position{selectedStocks.length !== 1 ? "s" : ""} &middot; $
-                  {selectedTotal.toLocaleString(undefined, { minimumFractionDigits: 0 })} total &middot;{" "}
+                  {selectedTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} total &middot;{" "}
                   {totalValue > 0 ? ((selectedTotal / totalValue) * 100).toFixed(1) : 0}% of portfolio
                 </p>
               </div>
@@ -294,13 +294,13 @@ export default function AnalyticsPage() {
                       </td>
                       <td className="px-4 py-2.5 text-right text-gray-300">{s.quantity.toLocaleString()}</td>
                       <td className="px-4 py-2.5 text-right text-gray-300">
-                        ${s.market_value.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                        ${s.market_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </td>
                       <td className="px-4 py-2.5 text-right text-gray-400">
                         {selectedTotal > 0 ? ((s.market_value / selectedTotal) * 100).toFixed(1) : 0}%
                       </td>
                       <td className={`px-4 py-2.5 text-right font-medium ${s.unrealized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                        ${s.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                        ${s.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </td>
                     </tr>
                   ))}
@@ -331,16 +331,16 @@ export default function AnalyticsPage() {
                     <td className="px-4 py-2.5 font-medium text-white">{d.name}</td>
                     <td className="px-4 py-2.5 text-right text-gray-300">{d.count}</td>
                     <td className="px-4 py-2.5 text-right text-gray-300">
-                      ${d.value.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                      ${d.value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </td>
                     <td className="px-4 py-2.5 text-right text-gray-400">
                       {totalValue > 0 ? ((d.value / totalValue) * 100).toFixed(1) : 0}%
                     </td>
                     <td className={`px-4 py-2.5 text-right font-medium ${d.pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                      ${d.pnl.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                      ${d.pnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                     </td>
                     <td className={`px-4 py-2.5 text-right ${d.count > 0 ? (d.pnl / d.count >= 0 ? "text-green-400" : "text-red-400") : "text-gray-500"}`}>
-                      ${d.count > 0 ? (d.pnl / d.count).toLocaleString(undefined, { minimumFractionDigits: 0 }) : "0"}
+                      ${d.count > 0 ? (d.pnl / d.count).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : "0"}
                     </td>
                   </tr>
                 ))}

@@ -150,7 +150,7 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
               />
               <Tooltip
                 formatter={(value: any) => [
-                  `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 0 })} (${totalValue > 0 ? ((Number(value) / totalValue) * 100).toFixed(1) : 0}%)`,
+                  `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} (${totalValue > 0 ? ((Number(value) / totalValue) * 100).toFixed(1) : 0}%)`,
                   "Exposure",
                 ]}
                 contentStyle={{
@@ -209,7 +209,7 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
                 <p className="text-xs text-gray-400 mt-1">
                   {selectedStocks.length} position
                   {selectedStocks.length !== 1 ? "s" : ""} &middot; $
-                  {selectedTotal.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                  {selectedTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                   {" "}total &middot;{" "}
                   {totalValue > 0 ? ((selectedTotal / totalValue) * 100).toFixed(1) : 0}% of portfolio
                 </p>
@@ -253,7 +253,7 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
                       </td>
                       <td className="px-4 py-2.5 text-right text-gray-300">{s.quantity.toLocaleString()}</td>
                       <td className="px-4 py-2.5 text-right text-gray-300">
-                        ${s.market_value.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                        ${s.market_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </td>
                       <td className="px-4 py-2.5 text-right text-gray-400">
                         {selectedTotal > 0 ? ((s.market_value / selectedTotal) * 100).toFixed(1) : 0}%
@@ -262,7 +262,7 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
                         {totalValue > 0 ? ((s.market_value / totalValue) * 100).toFixed(1) : 0}%
                       </td>
                       <td className={`px-4 py-2.5 text-right font-medium ${s.unrealized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                        ${s.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                        ${s.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </td>
                     </tr>
                   ))}

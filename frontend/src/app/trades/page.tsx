@@ -192,7 +192,7 @@ export default function TradeHistory() {
                                     <td className="px-6 py-4 text-right text-gray-300">{trade.quantity.toLocaleString()}</td>
                                     <td className="px-6 py-4 text-right text-gray-300">${trade.price.toFixed(2)}</td>
                                     <td className="px-6 py-4 text-right text-white font-medium">
-                                        ${(trade.quantity * trade.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        ${(trade.quantity * trade.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </td>
                                     <td className="px-6 py-4 text-center">
                                         {trade.is_wash_sale && (
@@ -313,7 +313,7 @@ export default function TradeHistory() {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
+                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded text-white"
                                 >
                                     Save Changes
                                 </button>
