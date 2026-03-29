@@ -11,6 +11,53 @@ from contextlib import asynccontextmanager
 
 logger = logging.getLogger("portfolio")
 
+
+# ── Shared Price Fetching Utilities ───────────────────────────────────
+
+def fetch_and_store_ticker_prices(db, ticker: str, start: str = "2020-01-01"):
+    """
+    Fetch historical prices for a single ticker and store in price_series.
+    Merges with existing data (won't overwrite existing dates).
+    Returns number of new price points written.
+    """
+    import yfinance as yf
+    import math
+
+    try:
+        data = yf.download(ticker, start=start, progress=False)
+        if data.empty:
+            return 0
+
+        close_series = data['Close'].dropna()
+        prices_map = {}
+        for date_idx, close_val in close_series.items():
+            close_price = float(close_val)
+            if not math.isnan(close_price) and close_price > 0:
+                prices_map[date_idx.strftime('%Y-%m-%d')] = round(close_price, 2)
+
+        if prices_map:
+            db.collection('price_series').document(ticker).set({
+                "ticker": ticker,
+                "prices": prices_map,
+                "last_updated": datetime.utcnow(),
+            }, merge=True)
+
+        logger.info(f"Stored {len(prices_map)} price points for {ticker}")
+        return len(prices_map)
+    except Exception as e:
+        logger.error(f"Failed to fetch prices for {ticker}: {e}")
+        return 0
+
+
+def get_tickers_with_price_data(db) -> set[str]:
+    """Return set of tickers that already have price_series data."""
+    existing = set()
+    docs = db.collection('price_series').stream()
+    for doc in docs:
+        existing.add(doc.id)
+    return existing
+
+
 # ── Scheduled Price Refresh ───────────────────────────────────────────
 
 def _run_price_refresh():
@@ -390,6 +437,18 @@ def create_asset(asset: schemas.AssetCreate, db=Depends(get_db)):
         "last_updated": datetime.utcnow(),
     }
     doc_ref.set(data)
+
+    # Auto-fetch historical prices for this new ticker (best-effort)
+    try:
+        import threading
+        threading.Thread(
+            target=fetch_and_store_ticker_prices,
+            args=(db, ticker),
+            daemon=True,
+        ).start()
+    except Exception:
+        pass
+
     data['last_updated'] = data['last_updated'].replace(tzinfo=None)
     return schemas.Asset(**data)
 
@@ -662,51 +721,59 @@ def backfill_history(db=Depends(get_db)):
     if not tickers or not earliest:
         return {"message": "No trades found.", "written": 0}
 
-    tickers = sorted(tickers)
+    # Skip tickers that already have price data
+    existing_tickers = get_tickers_with_price_data(db)
+    new_tickers = sorted(tickers - existing_tickers)
+    all_tickers = sorted(tickers)
+
     start_str = earliest.strftime('%Y-%m-%d')
-    logger.info(f"Backfilling prices for {len(tickers)} tickers from {start_str}")
 
-    try:
-        data = yf.download(tickers, start=start_str, progress=False)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Yahoo Finance error: {e}")
+    if not new_tickers:
+        logger.info(f"All {len(all_tickers)} tickers already have price data. Skipping download.")
+    else:
+        logger.info(f"Backfilling {len(new_tickers)} new tickers (skipping {len(existing_tickers)} with existing data) from {start_str}")
 
-    if data.empty:
-        return {"message": "No price data returned.", "written": 0}
+    tickers = new_tickers  # Only download for new tickers
 
-    is_multi = isinstance(data.columns, pd.MultiIndex)
-    batch = db.batch()
-    batch_count = 0
     written = 0
     failed_tickers = []
 
-    for ticker in tickers:
+    if tickers:
         try:
-            if is_multi:
-                close_series = data['Close'][ticker].dropna()
-            else:
-                close_series = data['Close'].dropna()
+            data = yf.download(tickers, start=start_str, progress=False)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Yahoo Finance error: {e}")
 
-            # Build consolidated price map for this ticker
-            prices_map = {}
-            for date_idx, close_val in close_series.items():
-                close_price = float(close_val)
-                if math.isnan(close_price) or close_price <= 0:
-                    continue
-                date_str = date_idx.strftime('%Y-%m-%d')
-                prices_map[date_str] = round(close_price, 2)
-                written += 1
+        if data.empty:
+            logger.warning("Yahoo Finance returned no data for new tickers")
+        else:
+            is_multi = isinstance(data.columns, pd.MultiIndex)
 
-            # Write consolidated price_series doc (one per ticker)
-            if prices_map:
-                db.collection('price_series').document(ticker).set({
-                    "ticker": ticker,
-                    "prices": prices_map,
-                    "last_updated": datetime.utcnow(),
-                }, merge=True)
+            for ticker in tickers:
+                try:
+                    if is_multi:
+                        close_series = data['Close'][ticker].dropna()
+                    else:
+                        close_series = data['Close'].dropna()
 
-        except Exception:
-            failed_tickers.append(ticker)
+                    prices_map = {}
+                    for date_idx, close_val in close_series.items():
+                        close_price = float(close_val)
+                        if math.isnan(close_price) or close_price <= 0:
+                            continue
+                        date_str = date_idx.strftime('%Y-%m-%d')
+                        prices_map[date_str] = round(close_price, 2)
+                        written += 1
+
+                    if prices_map:
+                        db.collection('price_series').document(ticker).set({
+                            "ticker": ticker,
+                            "prices": prices_map,
+                            "last_updated": datetime.utcnow(),
+                        }, merge=True)
+
+                except Exception:
+                    failed_tickers.append(ticker)
 
     # --- Phase 2: Backfill portfolio snapshots at weekly intervals ---
     logger.info("Backfilling portfolio snapshots...")
@@ -813,7 +880,7 @@ def backfill_history(db=Depends(get_db)):
     logger.info(f"Backfilled {snapshots_written} portfolio snapshots")
 
     return {
-        "message": f"Backfilled {written} price records and {snapshots_written} portfolio snapshots.",
+        "message": f"Backfilled {written} price records for {len(new_tickers)} new tickers ({len(existing_tickers)} skipped). {snapshots_written} portfolio snapshots stored.",
         "written": written,
         "snapshots": snapshots_written,
         "tickers": len(tickers),
