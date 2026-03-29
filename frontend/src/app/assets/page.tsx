@@ -8,9 +8,10 @@ export default function AssetsPage() {
   const [themes, setThemes] = useState<ThemeLists>({ primary: [], secondary: [] });
   const [loading, setLoading] = useState(true);
 
-  // Filter & sort
+  // Filters
   const [filterText, setFilterText] = useState("");
-  const [themeFilter, setThemeFilter] = useState("");
+  const [primaryFilter, setPrimaryFilter] = useState("");
+  const [secondaryFilter, setSecondaryFilter] = useState("");
   const [sortKey, setSortKey] = useState<string>("ticker");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
@@ -21,7 +22,7 @@ export default function AssetsPage() {
 
   // Edit modal
   const [editing, setEditing] = useState<Asset | null>(null);
-  const [editForm, setEditForm] = useState({ primary_theme: "", secondary_theme: "", price: "" });
+  const [editForm, setEditForm] = useState({ ticker: "", primary_theme: "", secondary_theme: "", price: "" });
 
   const fetchAssets = async () => {
     try {
@@ -40,16 +41,6 @@ export default function AssetsPage() {
 
   useEffect(() => { fetchAssets(); }, []);
 
-  // All unique themes for the dropdown filter
-  const allThemes = useMemo(() => {
-    const set = new Set<string>();
-    assets.forEach((a) => {
-      if (a.primary_theme) set.add(a.primary_theme);
-      if (a.secondary_theme) set.add(a.secondary_theme);
-    });
-    return Array.from(set).sort();
-  }, [assets]);
-
   // Sort & filter
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -63,18 +54,14 @@ export default function AssetsPage() {
   const filtered = useMemo(() => {
     const q = filterText.toLowerCase();
     let data = assets.filter((a) => {
-      // Text filter
       const matchesText =
         !q ||
         a.ticker.toLowerCase().includes(q) ||
         a.primary_theme.toLowerCase().includes(q) ||
         a.secondary_theme.toLowerCase().includes(q);
-      // Theme dropdown filter
-      const matchesTheme =
-        !themeFilter ||
-        a.primary_theme === themeFilter ||
-        a.secondary_theme === themeFilter;
-      return matchesText && matchesTheme;
+      const matchesPrimary = !primaryFilter || a.primary_theme === primaryFilter;
+      const matchesSecondary = !secondaryFilter || a.secondary_theme === secondaryFilter;
+      return matchesText && matchesPrimary && matchesSecondary;
     });
     data.sort((a, b) => {
       const vA = (a as any)[sortKey] ?? "";
@@ -84,7 +71,9 @@ export default function AssetsPage() {
       return 0;
     });
     return data;
-  }, [assets, filterText, themeFilter, sortKey, sortOrder]);
+  }, [assets, filterText, primaryFilter, secondaryFilter, sortKey, sortOrder]);
+
+  const hasFilters = !!filterText || !!primaryFilter || !!secondaryFilter;
 
   const SortIcon = ({ colKey }: { colKey: string }) => {
     if (sortKey !== colKey) return <span className="text-gray-600 ml-1">&#8693;</span>;
@@ -106,26 +95,21 @@ export default function AssetsPage() {
           price: parseFloat(addForm.price) || 0,
         }),
       });
-      if (res.status === 409) {
-        alert("This ticker already exists.");
-      } else if (res.ok) {
+      if (res.status === 409) alert("This ticker already exists.");
+      else if (res.ok) {
         setAddForm({ ticker: "", primary_theme: "", secondary_theme: "", price: "" });
         setShowAdd(false);
         fetchAssets();
-      } else {
-        alert("Failed to add asset.");
-      }
-    } catch {
-      alert("Error adding asset.");
-    } finally {
-      setAddLoading(false);
-    }
+      } else alert("Failed to add asset.");
+    } catch { alert("Error adding asset."); }
+    finally { setAddLoading(false); }
   };
 
-  // Edit asset
+  // Edit asset (with optional rename)
   const openEdit = (asset: Asset) => {
     setEditing(asset);
     setEditForm({
+      ticker: asset.ticker,
       primary_theme: asset.primary_theme,
       secondary_theme: asset.secondary_theme,
       price: String(asset.price),
@@ -136,39 +120,41 @@ export default function AssetsPage() {
     e.preventDefault();
     if (!editing) return;
     try {
+      const body: any = {
+        primary_theme: editForm.primary_theme,
+        secondary_theme: editForm.secondary_theme,
+        price: parseFloat(editForm.price) || 0,
+      };
+      // Include new_ticker if it changed
+      const newTicker = editForm.ticker.toUpperCase();
+      if (newTicker !== editing.ticker) {
+        body.new_ticker = newTicker;
+      }
       const res = await fetch(`/api/assets/${editing.ticker}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          primary_theme: editForm.primary_theme,
-          secondary_theme: editForm.secondary_theme,
-          price: parseFloat(editForm.price) || 0,
-        }),
+        body: JSON.stringify(body),
       });
-      if (res.ok) {
+      if (res.status === 409) {
+        alert(`Ticker "${newTicker}" already exists.`);
+      } else if (res.ok) {
         setEditing(null);
         fetchAssets();
-      } else {
-        alert("Failed to update asset.");
-      }
-    } catch {
-      alert("Error updating asset.");
-    }
+      } else alert("Failed to update asset.");
+    } catch { alert("Error updating asset."); }
   };
 
-  // Delete asset
-  const handleDelete = async (ticker: string) => {
-    if (!confirm(`Delete asset "${ticker}"? This removes its theme data.`)) return;
+  // Remove from asset list (trade history preserved)
+  const handleRemove = async (ticker: string) => {
+    if (!confirm(
+      `Remove "${ticker}" from asset list?\n\nTrade history will be preserved for tax purposes. ` +
+      `This only removes it from the asset registry (themes, price tracking).`
+    )) return;
     try {
       const res = await fetch(`/api/assets/${ticker}`, { method: "DELETE" });
-      if (res.ok) {
-        setAssets(assets.filter((a) => a.ticker !== ticker));
-      } else {
-        alert("Failed to delete asset.");
-      }
-    } catch {
-      alert("Error deleting asset.");
-    }
+      if (res.ok) setAssets(assets.filter((a) => a.ticker !== ticker));
+      else alert("Failed to remove asset.");
+    } catch { alert("Error removing asset."); }
   };
 
   return (
@@ -179,12 +165,7 @@ export default function AssetsPage() {
           <div>
             <h1 className="text-2xl font-bold text-white">Asset Registry</h1>
             <p className="mt-1 text-sm text-gray-400">
-              Manage stock themes and metadata &mdash; {assets.length} assets registered
-              {themeFilter && (
-                <span className="ml-2 text-indigo-400">
-                  (filtered: {themeFilter})
-                </span>
-              )}
+              {assets.length} assets registered
             </p>
           </div>
           <button
@@ -197,70 +178,29 @@ export default function AssetsPage() {
 
         {/* Add Form */}
         {showAdd && (
-          <form
-            onSubmit={handleAdd}
-            className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg"
-          >
+          <form onSubmit={handleAdd} className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
             <h3 className="text-lg font-semibold text-white mb-4">Register New Asset</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Ticker</label>
-                <input
-                  type="text"
-                  value={addForm.ticker}
-                  onChange={(e) => setAddForm({ ...addForm, ticker: e.target.value })}
-                  placeholder="AAPL"
-                  className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none uppercase"
-                  required
-                />
+                <input type="text" value={addForm.ticker} onChange={(e) => setAddForm({ ...addForm, ticker: e.target.value })} placeholder="AAPL" className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none uppercase" required />
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Primary Theme</label>
-                <input
-                  type="text"
-                  list="primary-themes"
-                  value={addForm.primary_theme}
-                  onChange={(e) => setAddForm({ ...addForm, primary_theme: e.target.value })}
-                  placeholder="e.g. AI, Energy"
-                  className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
-                  required
-                />
-                <datalist id="primary-themes">
-                  {themes.primary.map((t) => <option key={t} value={t} />)}
-                </datalist>
+                <input type="text" list="primary-themes" value={addForm.primary_theme} onChange={(e) => setAddForm({ ...addForm, primary_theme: e.target.value })} placeholder="e.g. AI" className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none" required />
+                <datalist id="primary-themes">{themes.primary.map((t) => <option key={t} value={t} />)}</datalist>
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Secondary Theme</label>
-                <input
-                  type="text"
-                  list="secondary-themes"
-                  value={addForm.secondary_theme}
-                  onChange={(e) => setAddForm({ ...addForm, secondary_theme: e.target.value })}
-                  placeholder="e.g. Semiconductor"
-                  className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
-                  required
-                />
-                <datalist id="secondary-themes">
-                  {themes.secondary.map((t) => <option key={t} value={t} />)}
-                </datalist>
+                <input type="text" list="secondary-themes" value={addForm.secondary_theme} onChange={(e) => setAddForm({ ...addForm, secondary_theme: e.target.value })} placeholder="e.g. Semiconductor" className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none" required />
+                <datalist id="secondary-themes">{themes.secondary.map((t) => <option key={t} value={t} />)}</datalist>
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Price</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={addForm.price}
-                  onChange={(e) => setAddForm({ ...addForm, price: e.target.value })}
-                  placeholder="0.00"
-                  className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
-                />
+                <input type="number" step="0.01" value={addForm.price} onChange={(e) => setAddForm({ ...addForm, price: e.target.value })} placeholder="0.00" className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none" />
               </div>
             </div>
-            <button
-              type="submit"
-              disabled={addLoading}
-              className="mt-4 px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium transition-colors disabled:opacity-50"
-            >
+            <button type="submit" disabled={addLoading} className="mt-4 px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium transition-colors disabled:opacity-50">
               {addLoading ? "Adding..." : "Register Asset"}
             </button>
           </form>
@@ -270,31 +210,37 @@ export default function AssetsPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <input
             type="text"
-            placeholder="Search by ticker or theme..."
+            placeholder="Search ticker or theme..."
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
-            className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 w-full md:w-72 text-sm"
+            className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 w-full md:w-64 text-sm"
           />
           <select
-            value={themeFilter}
-            onChange={(e) => setThemeFilter(e.target.value)}
-            className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 text-sm"
+            value={primaryFilter}
+            onChange={(e) => setPrimaryFilter(e.target.value)}
+            className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 text-sm"
           >
-            <option value="">All Themes</option>
-            {allThemes.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
+            <option value="">All Primary</option>
+            {themes.primary.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
-          {themeFilter && (
+          <select
+            value={secondaryFilter}
+            onChange={(e) => setSecondaryFilter(e.target.value)}
+            className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 text-sm"
+          >
+            <option value="">All Secondary</option>
+            {themes.secondary.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+          {hasFilters && (
             <button
-              onClick={() => setThemeFilter("")}
+              onClick={() => { setFilterText(""); setPrimaryFilter(""); setSecondaryFilter(""); }}
               className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700"
             >
-              Clear filter
+              Clear all
             </button>
           )}
           <span className="text-xs text-gray-500 ml-auto">
-            {filtered.length} of {assets.length} shown
+            {filtered.length} of {assets.length}
           </span>
         </div>
 
@@ -332,7 +278,7 @@ export default function AssetsPage() {
                     <td className="px-4 py-2.5 font-medium text-white">{asset.ticker}</td>
                     <td className="px-4 py-2.5">
                       <button
-                        onClick={() => setThemeFilter(asset.primary_theme)}
+                        onClick={() => setPrimaryFilter(asset.primary_theme)}
                         className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-900/60 transition-colors"
                       >
                         {asset.primary_theme}
@@ -340,7 +286,7 @@ export default function AssetsPage() {
                     </td>
                     <td className="px-4 py-2.5">
                       <button
-                        onClick={() => setThemeFilter(asset.secondary_theme)}
+                        onClick={() => setSecondaryFilter(asset.secondary_theme)}
                         className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300 border border-cyan-700/50 hover:bg-cyan-900/60 transition-colors"
                       >
                         {asset.secondary_theme}
@@ -353,9 +299,6 @@ export default function AssetsPage() {
                       {asset.daily_change_pct != null ? (
                         <span className={`font-medium ${asset.daily_change_pct >= 0 ? "text-green-400" : "text-red-400"}`}>
                           {asset.daily_change_pct >= 0 ? "+" : ""}{asset.daily_change_pct.toFixed(2)}%
-                          <span className="text-xs ml-1 text-gray-500">
-                            ({asset.daily_change_pct >= 0 ? "+" : ""}${asset.daily_change?.toFixed(2)})
-                          </span>
                         </span>
                       ) : (
                         <span className="text-gray-600 text-xs">--</span>
@@ -365,8 +308,8 @@ export default function AssetsPage() {
                       <button onClick={() => openEdit(asset)} className="text-blue-400 hover:text-blue-300 text-xs">
                         Edit
                       </button>
-                      <button onClick={() => handleDelete(asset.ticker)} className="text-red-400 hover:text-red-300 text-xs">
-                        Delete
+                      <button onClick={() => handleRemove(asset.ticker)} className="text-gray-500 hover:text-red-400 text-xs">
+                        Remove
                       </button>
                     </td>
                   </tr>
@@ -391,9 +334,28 @@ export default function AssetsPage() {
           onClick={(e) => { if (e.target === e.currentTarget) setEditing(null); }}
         >
           <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-md p-6">
-            <h2 className="text-xl font-bold text-white mb-1">Edit {editing.ticker}</h2>
-            <p className="text-sm text-gray-400 mb-4">Update theme assignments and price</p>
+            <h2 className="text-xl font-bold text-white mb-1">Edit Asset</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              Update ticker, themes, or price. Renaming the ticker will also update all trade history.
+            </p>
             <form onSubmit={handleUpdate} className="space-y-4">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">
+                  Ticker
+                  {editForm.ticker.toUpperCase() !== editing.ticker && (
+                    <span className="ml-2 text-amber-400">
+                      Renaming from {editing.ticker}
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={editForm.ticker}
+                  onChange={(e) => setEditForm({ ...editForm, ticker: e.target.value })}
+                  className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none uppercase"
+                  required
+                />
+              </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Primary Theme</label>
                 <input
@@ -404,9 +366,7 @@ export default function AssetsPage() {
                   className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
                   required
                 />
-                <datalist id="edit-primary-themes">
-                  {themes.primary.map((t) => <option key={t} value={t} />)}
-                </datalist>
+                <datalist id="edit-primary-themes">{themes.primary.map((t) => <option key={t} value={t} />)}</datalist>
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Secondary Theme</label>
@@ -418,9 +378,7 @@ export default function AssetsPage() {
                   className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
                   required
                 />
-                <datalist id="edit-secondary-themes">
-                  {themes.secondary.map((t) => <option key={t} value={t} />)}
-                </datalist>
+                <datalist id="edit-secondary-themes">{themes.secondary.map((t) => <option key={t} value={t} />)}</datalist>
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Price</label>
@@ -433,18 +391,11 @@ export default function AssetsPage() {
                 />
               </div>
               <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setEditing(null)}
-                  className="px-4 py-2 hover:bg-gray-700 rounded text-gray-300 text-sm"
-                >
+                <button type="button" onClick={() => setEditing(null)} className="px-4 py-2 hover:bg-gray-700 rounded text-gray-300 text-sm">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded text-white text-sm"
-                >
-                  Save Changes
+                <button type="submit" className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded text-white text-sm">
+                  {editForm.ticker.toUpperCase() !== editing.ticker ? "Rename & Save" : "Save Changes"}
                 </button>
               </div>
             </form>

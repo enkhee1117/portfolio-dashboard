@@ -208,14 +208,55 @@ def update_asset(ticker: str, asset: schemas.AssetUpdate, db=Depends(get_db)):
     doc = doc_ref.get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail=f"Asset '{ticker}' not found.")
-    updates = {k: v for k, v in asset.model_dump().items() if v is not None}
-    updates['last_updated'] = datetime.utcnow()
-    doc_ref.update(updates)
-    # Return the full updated document
-    d = doc_ref.get().to_dict()
-    if 'last_updated' in d and hasattr(d['last_updated'], 'replace'):
-        d['last_updated'] = d['last_updated'].replace(tzinfo=None)
-    return schemas.Asset(**d)
+
+    new_ticker = asset.new_ticker.upper() if asset.new_ticker else None
+
+    # If renaming ticker, create new doc, update trades, delete old doc
+    if new_ticker and new_ticker != ticker:
+        new_doc_ref = db.collection('asset_prices').document(new_ticker)
+        if new_doc_ref.get().exists:
+            raise HTTPException(status_code=409, detail=f"Asset '{new_ticker}' already exists.")
+
+        # Copy data to new doc
+        old_data = doc.to_dict()
+        updates = {k: v for k, v in asset.model_dump().items() if v is not None and k != 'new_ticker'}
+        old_data.update(updates)
+        old_data['ticker'] = new_ticker
+        old_data['last_updated'] = datetime.utcnow()
+        new_doc_ref.set(old_data)
+
+        # Update all trades with the old ticker
+        trades_docs = db.collection('trades').where(
+            filter=FieldFilter('ticker', '==', ticker)
+        ).stream()
+        batch = db.batch()
+        batch_count = 0
+        for tdoc in trades_docs:
+            batch.update(tdoc.reference, {'ticker': new_ticker})
+            batch_count += 1
+            if batch_count >= 400:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+        if batch_count > 0:
+            batch.commit()
+
+        # Delete old asset doc
+        doc_ref.delete()
+
+        d = new_doc_ref.get().to_dict()
+        if 'last_updated' in d and hasattr(d['last_updated'], 'replace'):
+            d['last_updated'] = d['last_updated'].replace(tzinfo=None)
+        return schemas.Asset(**d)
+    else:
+        # Normal update (no rename)
+        updates = {k: v for k, v in asset.model_dump().items() if v is not None and k != 'new_ticker'}
+        updates['last_updated'] = datetime.utcnow()
+        doc_ref.update(updates)
+        d = doc_ref.get().to_dict()
+        if 'last_updated' in d and hasattr(d['last_updated'], 'replace'):
+            d['last_updated'] = d['last_updated'].replace(tzinfo=None)
+        return schemas.Asset(**d)
 
 
 @app.delete("/assets/{ticker}")

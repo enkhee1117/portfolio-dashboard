@@ -58,6 +58,7 @@ class AssetUpdate(BaseModel):
     price: Optional[float] = None
     primary_theme: Optional[str] = None
     secondary_theme: Optional[str] = None
+    new_ticker: Optional[str] = None  # For renaming ticker
 
 class Asset(AssetBase):
     last_updated: Optional[datetime] = None
