@@ -341,6 +341,7 @@ function PortfolioContent() {
                       <th className="px-4 py-3 text-xs">Secondary</th>
                       <th className="px-4 py-3 text-xs text-right">Price</th>
                       <th className="px-4 py-3 text-xs text-right">Daily Chg</th>
+                      <th className="px-4 py-3 text-xs text-right"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-700">
@@ -368,10 +369,25 @@ function PortfolioContent() {
                               </span>
                             ) : <span className="text-gray-600 text-xs">--</span>}
                           </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`Remove "${asset.ticker}" from asset list?\n\nTrade history will be preserved.`)) return;
+                                try {
+                                  const res = await fetch(`/api/assets/${asset.ticker}`, { method: "DELETE" });
+                                  if (res.ok) setAssets(assets.filter(a => a.ticker !== asset.ticker));
+                                  else toast.error("Failed to remove asset.");
+                                } catch { toast.error("Error removing asset."); }
+                              }}
+                              className="text-gray-500 hover:text-red-400 text-xs transition-colors"
+                            >
+                              Remove
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     {assets.length === 0 && (
-                      <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500 italic">No assets. Add from <a href="/settings" className="text-indigo-400 hover:underline">Settings</a>.</td></tr>
+                      <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-500 italic">No assets. Add from <a href="/settings" className="text-indigo-400 hover:underline">Settings</a>.</td></tr>
                     )}
                   </tbody>
                 </table>
