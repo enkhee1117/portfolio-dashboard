@@ -49,11 +49,19 @@ Every operation must produce the same result whether run once or ten times, with
 
 **The backfill lesson**: The original backfill checked "does this ticker have price data?" — if yes, skip entirely. But a ticker could have data through March 27 and be missing March 28-29. The fix: check **when** the data was last updated, not **whether** it exists.
 
-This principle applies everywhere:
+**Freshness definitions**:
+
+| State | Definition | Action |
+|-------|-----------|--------|
+| **Fresh** | Data includes the most recent trading day's close (or was computed after the latest price refresh) | Skip — no work needed |
+| **Stale** | Data exists but is missing recent days (e.g., last entry is 2 days ago) | Gap-fill — fetch only missing days |
+| **Empty** | No data at all for this entity | Full fetch — download complete history |
+
+This applies everywhere:
 
 | Check | Wrong question | Right question |
 |-------|---------------|----------------|
-| Price backfill | "Does AAPL have price data?" | "What is AAPL's last price date? Is it current?" |
+| Price backfill | "Does AAPL have price data?" | "What is AAPL's last price date? Is it today?" |
 | Portfolio snapshot | "Does today's snapshot exist?" | "Does it exist AND have positions? (historical snapshots have empty positions)" |
 | Daily refresh | "Did we refresh today?" | "Did we refresh after market close today?" |
 | Theme assignment | "Does this asset have themes?" | "Does it have BOTH primary AND secondary themes?" |
@@ -73,11 +81,11 @@ new_tickers = all_tickers - existing  # skips stale tickers!
 last_dates = get_tickers_last_price_date(db)  # returns {ticker: last_date}
 for ticker in all_tickers:
     if ticker not in last_dates:
-        download_full_history(ticker)  # new ticker
+        download_full_history(ticker)  # EMPTY — new ticker
     elif last_dates[ticker] < today:
-        download_since(ticker, last_dates[ticker])  # fill gap
+        download_since(ticker, last_dates[ticker])  # STALE — fill gap
     else:
-        skip(ticker)  # already fresh
+        skip(ticker)  # FRESH — already current
 ```
 
 ### 4. Data Locality
@@ -207,6 +215,41 @@ Document ID: "YYYY-MM-DD" (e.g., "2026-03-29")
 ### `price_history` — DEPRECATED
 - 261k individual docs — replaced by `price_series`
 - No longer written to. Safe to delete after verifying `price_series` coverage.
+
+---
+
+## Data Ownership: Shared vs Per-User
+
+**Critical for multi-user scaling**: some data is universal (AAPL's price is the same for everyone), some is personal (each user's trades are their own). Mixing these wastes storage, API calls, and creates inconsistencies.
+
+```
+SHARED (one copy, all users read)         PER-USER (one copy per user)
+├── price_series/AAPL                     ├── trades (user's buy/sell history)
+│   └── AAPL's daily close prices         ├── portfolio_snapshots (user's portfolio value)
+├── asset_prices/AAPL                     └── (future) watchlists, alerts, preferences
+│   └── Current price, daily change
+└── (future) market news, earnings
+```
+
+**Why this matters**:
+- If 100 users follow AAPL, we store AAPL's price history **once**, not 100 times
+- The daily price refresh runs **once** and updates the shared `price_series` — all users benefit
+- When User A adds AAPL as a new asset, the background thread checks if `price_series/AAPL` already exists (another user may have added it first). If so, skip the download
+
+**Current implementation**:
+
+| Collection | Ownership | Notes |
+|---|---|---|
+| `price_series` | **Shared** | One doc per ticker. If two users follow AAPL, one doc serves both. Download happens on first registration. |
+| `asset_prices` | **Shared (needs splitting for multi-user)** | Price fields are shared. Theme assignments are currently global but should become per-user when scaling. |
+| `trades` | **Per-user** | Currently no user_id field (single-user app). Multi-user: add user_id or use subcollections. |
+| `portfolio_snapshots` | **Per-user** | Currently global. Multi-user: move to `users/{uid}/snapshots/{date}`. |
+
+**Rules for new collections**:
+- Ask: "Is this the same for every user?" → Shared collection
+- Ask: "Does this depend on who's viewing it?" → Per-user collection or subcollection
+- Never duplicate shared data into per-user storage
+- Never put per-user data in shared collections without a user_id field
 
 ---
 
