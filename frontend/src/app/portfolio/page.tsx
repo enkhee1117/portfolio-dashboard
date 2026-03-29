@@ -3,14 +3,17 @@
 import { useEffect, useState, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import PositionTable from "../../components/PositionTable";
-import { PortfolioSnapshot, Trade } from "../types";
+import { PortfolioSnapshot, Trade, Asset, ThemeLists } from "../types";
 import { useToast } from "../../components/Toast";
 import { useEscape, useCmdK } from "../../components/useKeyboard";
 
+type TabType = "positions" | "trades" | "assets";
+
 function PortfolioContent() {
   const searchParams = useSearchParams();
-  const initialTab = searchParams.get("tab") === "trades" ? "trades" : "positions";
-  const [tab, setTab] = useState<"positions" | "trades">(initialTab);
+  const tabParam = searchParams.get("tab");
+  const initialTab: TabType = tabParam === "trades" ? "trades" : tabParam === "assets" ? "assets" : "positions";
+  const [tab, setTab] = useState<TabType>(initialTab);
 
   // Positions
   const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
@@ -19,6 +22,15 @@ function PortfolioContent() {
   // Trades
   const [trades, setTrades] = useState<Trade[]>([]);
   const [tradeLoading, setTradeLoading] = useState(true);
+
+  // Assets
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [themes, setThemes] = useState<ThemeLists>({ primary: [], secondary: [] });
+  const [assetLoading, setAssetLoading] = useState(true);
+  const [assetFilter, setAssetFilter] = useState("");
+  const [primaryFilter, setPrimaryFilter] = useState("");
+  const [secondaryFilter, setSecondaryFilter] = useState("");
+
   const toast = useToast();
   useCmdK();
 
@@ -43,6 +55,14 @@ function PortfolioContent() {
       .then((data) => setTrades(data))
       .catch(console.error)
       .finally(() => setTradeLoading(false));
+
+    Promise.all([fetch("/api/assets"), fetch("/api/assets/themes")])
+      .then(async ([aRes, tRes]) => {
+        if (aRes.ok) setAssets(await aRes.json());
+        if (tRes.ok) setThemes(await tRes.json());
+      })
+      .catch(console.error)
+      .finally(() => setAssetLoading(false));
   }, []);
 
   const activeCount = positions.filter((p) => p.quantity > 0).length;
@@ -110,26 +130,25 @@ function PortfolioContent() {
           <div>
             <h1 className="text-2xl font-bold text-white">Portfolio</h1>
             <p className="mt-1 text-sm text-gray-400">
-              {tab === "positions" ? `${activeCount} active positions` : `${trades.length} total trades`}
+              {tab === "positions" ? `${activeCount} active positions` : tab === "trades" ? `${trades.length} total trades` : `${assets.length} registered assets`}
             </p>
           </div>
-          <div className="flex gap-1 bg-gray-800 rounded-lg p-0.5 border border-gray-700">
-            <button
-              onClick={() => setTab("positions")}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                tab === "positions" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-gray-200"
-              }`}
-            >
-              Positions
-            </button>
-            <button
-              onClick={() => setTab("trades")}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                tab === "trades" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-gray-200"
-              }`}
-            >
-              Trade History
-            </button>
+          <div className="flex gap-0.5 bg-gray-800 rounded-lg p-0.5 border border-gray-700">
+            {([
+              { key: "positions" as TabType, label: "Positions" },
+              { key: "trades" as TabType, label: "Trades" },
+              { key: "assets" as TabType, label: "Assets" },
+            ]).map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  tab === t.key ? "bg-gray-700 text-white" : "text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -227,6 +246,83 @@ function PortfolioContent() {
               </div>
             )}
           </>
+        )}
+
+        {/* Assets Tab */}
+        {tab === "assets" && (
+          assetLoading ? (
+            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500" /></div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 flex-wrap">
+                <input type="text" placeholder="Search ticker or theme..." value={assetFilter} onChange={(e) => setAssetFilter(e.target.value)}
+                  className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 w-full md:w-64 text-sm" />
+                <select value={primaryFilter} onChange={(e) => setPrimaryFilter(e.target.value)} className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm">
+                  <option value="">All Primary</option>
+                  {themes.primary.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select value={secondaryFilter} onChange={(e) => setSecondaryFilter(e.target.value)} className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm">
+                  <option value="">All Secondary</option>
+                  {themes.secondary.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                {(assetFilter || primaryFilter || secondaryFilter) && (
+                  <button onClick={() => { setAssetFilter(""); setPrimaryFilter(""); setSecondaryFilter(""); }} className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700">Clear</button>
+                )}
+                <span className="text-xs text-gray-500 ml-auto">
+                  {assets.filter(a => {
+                    const q = assetFilter.toLowerCase();
+                    return (!q || a.ticker.toLowerCase().includes(q) || a.primary_theme.toLowerCase().includes(q) || a.secondary_theme.toLowerCase().includes(q))
+                      && (!primaryFilter || a.primary_theme === primaryFilter)
+                      && (!secondaryFilter || a.secondary_theme === secondaryFilter);
+                  }).length} of {assets.length}
+                </span>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-gray-700 bg-gray-800 shadow-xl">
+                <table className="min-w-full text-left text-sm whitespace-nowrap">
+                  <thead className="bg-gray-900/50 uppercase tracking-wider border-b border-gray-700 text-gray-400">
+                    <tr>
+                      <th className="px-4 py-3 text-xs">Ticker</th>
+                      <th className="px-4 py-3 text-xs">Primary</th>
+                      <th className="px-4 py-3 text-xs">Secondary</th>
+                      <th className="px-4 py-3 text-xs text-right">Price</th>
+                      <th className="px-4 py-3 text-xs text-right">Daily Chg</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700">
+                    {assets
+                      .filter(a => {
+                        const q = assetFilter.toLowerCase();
+                        return (!q || a.ticker.toLowerCase().includes(q) || a.primary_theme.toLowerCase().includes(q) || a.secondary_theme.toLowerCase().includes(q))
+                          && (!primaryFilter || a.primary_theme === primaryFilter)
+                          && (!secondaryFilter || a.secondary_theme === secondaryFilter);
+                      })
+                      .map((asset) => (
+                        <tr key={asset.ticker} className="hover:bg-gray-700/50 transition-colors">
+                          <td className="px-4 py-2.5 font-medium text-white">{asset.ticker}</td>
+                          <td className="px-4 py-2.5">
+                            <button onClick={() => setPrimaryFilter(asset.primary_theme)} className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-900/60 transition-colors">{asset.primary_theme}</button>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <button onClick={() => setSecondaryFilter(asset.secondary_theme)} className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300 border border-cyan-700/50 hover:bg-cyan-900/60 transition-colors">{asset.secondary_theme}</button>
+                          </td>
+                          <td className="px-4 py-2.5 text-right text-gray-300">${asset.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            {asset.daily_change_pct != null ? (
+                              <span className={`font-medium ${asset.daily_change_pct >= 0 ? "text-green-400" : "text-red-400"}`}>
+                                {asset.daily_change_pct >= 0 ? "+" : ""}{asset.daily_change_pct.toFixed(2)}%
+                              </span>
+                            ) : <span className="text-gray-600 text-xs">--</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    {assets.length === 0 && (
+                      <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500 italic">No assets. Add from <a href="/settings" className="text-indigo-400 hover:underline">Settings</a>.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )
         )}
       </div>
 
