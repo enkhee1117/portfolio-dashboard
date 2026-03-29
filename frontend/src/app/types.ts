@@ -47,3 +47,16 @@ export interface PortfolioHistoryPoint {
     date: string;
     value: number;
 }
+
+export interface ThemeBasketSeries {
+    name: string;
+    stocks: number;
+    start_value: number;
+    end_value: number;
+    return_pct: number;
+    data: { date: string; value: number }[];
+}
+
+export interface ThemeBasketResponse {
+    themes: ThemeBasketSeries[];
+}

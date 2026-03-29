@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { PortfolioSnapshot } from "../types";
+import { PortfolioSnapshot, ThemeBasketSeries } from "../types";
 import {
   BarChart,
   Bar,
@@ -10,6 +10,9 @@ import {
   Tooltip,
   ResponsiveContainer,
   Cell,
+  LineChart,
+  Line,
+  Legend,
 } from "recharts";
 
 const COLORS = [
@@ -31,6 +34,11 @@ export default function AnalyticsPage() {
   const [selectedPrimary, setSelectedPrimary] = useState<string | null>(null);
   const [selectedSecondary, setSelectedSecondary] = useState<string | null>(null);
 
+  // Theme basket comparison
+  const [basketPeriod, setBasketPeriod] = useState("1y");
+  const [baskets, setBaskets] = useState<ThemeBasketSeries[]>([]);
+  const [basketLoading, setBasketLoading] = useState(true);
+
   useEffect(() => {
     fetch("/api/portfolio")
       .then((r) => r.json())
@@ -38,6 +46,15 @@ export default function AnalyticsPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    setBasketLoading(true);
+    fetch(`/api/analytics/theme-baskets?period=${basketPeriod}`)
+      .then((r) => r.json())
+      .then((data) => setBaskets(data.themes || []))
+      .catch(console.error)
+      .finally(() => setBasketLoading(false));
+  }, [basketPeriod]);
 
   // Long positions only
   const longPositions = useMemo(
@@ -347,6 +364,127 @@ export default function AnalyticsPage() {
               </tbody>
             </table>
           </div>
+        </div>
+        {/* Theme Basket Comparison */}
+        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-200">Theme Basket Comparison</h3>
+              <p className="text-xs text-gray-400 mt-1">
+                Each theme basket starts at $10,000 with equal-weighted stocks. Shows relative performance over time.
+              </p>
+            </div>
+            <div className="flex gap-1 bg-gray-900/50 rounded-lg p-0.5">
+              {[{ key: "3m", label: "3M" }, { key: "6m", label: "6M" }, { key: "1y", label: "1Y" }, { key: "all", label: "ALL" }].map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => setBasketPeriod(p.key)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    basketPeriod === p.key ? "bg-gray-700 text-white" : "text-gray-400 hover:text-gray-200"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {basketLoading ? (
+            <div className="flex justify-center py-16">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500" />
+            </div>
+          ) : baskets.length === 0 ? (
+            <p className="text-sm text-gray-400 py-8 text-center">
+              No basket data available. Run <a href="/settings" className="text-indigo-400 hover:underline">Backfill Historical Prices</a> first.
+            </p>
+          ) : (
+            <>
+              {/* Multi-line chart */}
+              <div style={{ height: 400, minWidth: 0 }} className="w-full overflow-hidden">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
+                    <XAxis
+                      dataKey="date"
+                      type="category"
+                      allowDuplicatedCategory={false}
+                      tickFormatter={(d) => {
+                        const dt = new Date(d);
+                        return dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                      }}
+                      tick={{ fill: "#9ca3af", fontSize: 11 }}
+                      axisLine={{ stroke: "#374151" }}
+                      tickLine={false}
+                      minTickGap={40}
+                    />
+                    <YAxis
+                      tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      tick={{ fill: "#9ca3af", fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={55}
+                      domain={["auto", "auto"]}
+                    />
+                    <Tooltip
+                      formatter={(value: any, name: any) => [
+                        `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                        name,
+                      ]}
+                      labelFormatter={(label) => new Date(label).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                      contentStyle={{ backgroundColor: "#1f2937", borderColor: "#374151", color: "#f3f4f6", borderRadius: "8px", fontSize: "12px" }}
+                    />
+                    <Legend />
+                    {baskets.map((theme, i) => (
+                      <Line
+                        key={theme.name}
+                        data={theme.data}
+                        type="monotone"
+                        dataKey="value"
+                        name={theme.name}
+                        stroke={COLORS[i % COLORS.length]}
+                        strokeWidth={1.5}
+                        dot={false}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Performance table */}
+              <div className="mt-6 overflow-x-auto">
+                <table className="min-w-full text-left text-sm whitespace-nowrap">
+                  <thead className="text-gray-500 uppercase tracking-wider text-xs border-b border-gray-700">
+                    <tr>
+                      <th className="px-4 py-2">Theme</th>
+                      <th className="px-4 py-2 text-right">Stocks</th>
+                      <th className="px-4 py-2 text-right">Start</th>
+                      <th className="px-4 py-2 text-right">End</th>
+                      <th className="px-4 py-2 text-right">Return</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700/50">
+                    {baskets.map((t, i) => (
+                      <tr key={t.name} className="hover:bg-gray-700/30">
+                        <td className="px-4 py-2 font-medium text-white flex items-center gap-2">
+                          <span className="w-3 h-3 rounded-full inline-block" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                          {t.name}
+                        </td>
+                        <td className="px-4 py-2 text-right text-gray-300">{t.stocks}</td>
+                        <td className="px-4 py-2 text-right text-gray-300">
+                          ${t.start_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="px-4 py-2 text-right text-gray-300">
+                          ${t.end_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-medium ${t.return_pct >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {t.return_pct >= 0 ? "+" : ""}{t.return_pct.toFixed(1)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </main>
