@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useMemo } from 'react';
-import PositionTable from '../components/PositionTable';
 import ManualTradeForm from '../components/ManualTradeForm';
 import ThemeAnalysis from '../components/ThemeAnalysis';
 import PortfolioChart from '../components/PortfolioChart';
@@ -336,19 +335,65 @@ export default function Home() {
         {/* Theme Analysis */}
         <ThemeAnalysis positions={positions} />
 
-        {/* Current Positions */}
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-lg font-semibold text-gray-200">Current Positions</h2>
-            <span className="text-sm text-gray-400">{positions.length} positions</span>
+        {/* Top Positions */}
+        <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold text-gray-200">Top Positions</h2>
+            <a
+              href="/positions"
+              className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+            >
+              View all {activePositions.length} &rarr;
+            </a>
           </div>
 
           {loading ? (
-            <div className="flex justify-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+            <div className="flex justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
             </div>
           ) : (
-            <PositionTable positions={positions} />
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="text-gray-500 uppercase tracking-wider text-xs border-b border-gray-700">
+                  <tr>
+                    <th className="px-3 py-2">Ticker</th>
+                    <th className="px-3 py-2 hidden sm:table-cell">Theme</th>
+                    <th className="px-3 py-2 text-right">Mkt Value</th>
+                    <th className="px-3 py-2 text-right">Unreal. P&L</th>
+                    <th className="px-3 py-2 text-right hidden sm:table-cell">% Portfolio</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700/50">
+                  {activePositions
+                    .sort((a, b) => b.market_value - a.market_value)
+                    .slice(0, 10)
+                    .map((pos) => {
+                      const pctPortfolio = totalMarketValue > 0 ? (pos.market_value / totalMarketValue) * 100 : 0;
+                      return (
+                        <tr key={pos.ticker} className="hover:bg-gray-700/30">
+                          <td className="px-3 py-2.5 font-medium text-white">{pos.ticker}</td>
+                          <td className="px-3 py-2.5 hidden sm:table-cell">
+                            {pos.primary_theme && (
+                              <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">
+                                {pos.primary_theme}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-white font-medium">
+                            ${pos.market_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </td>
+                          <td className={`px-3 py-2.5 text-right font-medium ${pos.unrealized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            ${pos.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-gray-400 hidden sm:table-cell">
+                            {pctPortfolio.toFixed(1)}%
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
