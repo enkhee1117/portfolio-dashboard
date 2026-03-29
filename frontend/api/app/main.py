@@ -5,9 +5,161 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 import os
 import shutil
 import json
+import logging
 from datetime import datetime
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+logger = logging.getLogger("portfolio")
+
+# ── Scheduled Price Refresh ───────────────────────────────────────────
+
+def _run_price_refresh():
+    """Standalone price refresh function called by scheduler and API."""
+    import yfinance as yf
+    import pandas as pd
+    import math
+
+    db = get_db()
+    docs = db.collection('asset_prices').stream()
+    tickers = [d.to_dict().get('ticker') for d in docs if d.to_dict().get('ticker')]
+
+    if not tickers:
+        logger.info("Price refresh: no assets to update.")
+        return {"updated": 0, "failed": []}
+
+    try:
+        data = yf.download(tickers, period='5d', progress=False)
+    except Exception as e:
+        logger.error(f"Price refresh: Yahoo Finance error: {e}")
+        return {"updated": 0, "failed": tickers}
+
+    if data.empty:
+        return {"updated": 0, "failed": tickers}
+
+    is_multi = isinstance(data.columns, pd.MultiIndex)
+    now = datetime.utcnow()
+
+    updated = 0
+    failed = []
+    asset_batch = db.batch()
+    asset_batch_count = 0
+    history_batch = db.batch()
+    history_batch_count = 0
+
+    for ticker in tickers:
+        try:
+            if is_multi:
+                close_series = data['Close'][ticker].dropna()
+                open_series = data['Open'][ticker].dropna()
+                high_series = data['High'][ticker].dropna()
+                low_series = data['Low'][ticker].dropna()
+                vol_series = data['Volume'][ticker].dropna() if 'Volume' in data.columns.get_level_values(0) else pd.Series()
+            else:
+                close_series = data['Close'].dropna()
+                open_series = data['Open'].dropna()
+                high_series = data['High'].dropna()
+                low_series = data['Low'].dropna()
+                vol_series = data['Volume'].dropna() if 'Volume' in data.columns else pd.Series()
+
+            if len(close_series) < 1:
+                failed.append(ticker)
+                continue
+
+            close_price = float(close_series.iloc[-1])
+            open_price = float(open_series.iloc[-1]) if len(open_series) > 0 else 0.0
+            high_price = float(high_series.iloc[-1]) if len(high_series) > 0 else 0.0
+            low_price = float(low_series.iloc[-1]) if len(low_series) > 0 else 0.0
+            volume = float(vol_series.iloc[-1]) if len(vol_series) > 0 else 0.0
+            latest_date = close_series.index[-1].strftime('%Y-%m-%d')
+            prev_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else None
+
+            daily_change = None
+            daily_change_pct = None
+            if prev_close and prev_close > 0 and not math.isnan(prev_close):
+                daily_change = round(close_price - prev_close, 2)
+                daily_change_pct = round((daily_change / prev_close) * 100, 2)
+
+            if close_price > 0 and not math.isnan(close_price):
+                doc_ref = db.collection('asset_prices').document(ticker)
+                asset_batch.update(doc_ref, {
+                    "price": round(close_price, 2),
+                    "previous_close": round(prev_close, 2) if prev_close and not math.isnan(prev_close) else None,
+                    "daily_change": daily_change,
+                    "daily_change_pct": daily_change_pct,
+                    "last_updated": now,
+                })
+                asset_batch_count += 1
+
+                history_doc_id = f"{ticker}_{latest_date}"
+                history_ref = db.collection('price_history').document(history_doc_id)
+                history_batch.set(history_ref, {
+                    "ticker": ticker,
+                    "date": latest_date,
+                    "open": round(open_price, 2),
+                    "high": round(high_price, 2),
+                    "low": round(low_price, 2),
+                    "close": round(close_price, 2),
+                    "previous_close": round(prev_close, 2) if prev_close and not math.isnan(prev_close) else None,
+                    "volume": round(volume, 0) if not math.isnan(volume) else 0,
+                })
+                history_batch_count += 1
+                updated += 1
+
+                if asset_batch_count >= 400:
+                    asset_batch.commit()
+                    asset_batch = db.batch()
+                    asset_batch_count = 0
+                if history_batch_count >= 400:
+                    history_batch.commit()
+                    history_batch = db.batch()
+                    history_batch_count = 0
+            else:
+                failed.append(ticker)
+        except Exception:
+            failed.append(ticker)
+
+    if asset_batch_count > 0:
+        asset_batch.commit()
+    if history_batch_count > 0:
+        history_batch.commit()
+
+    logger.info(f"Price refresh complete: {updated} updated, {len(failed)} failed.")
+    return {"updated": updated, "failed": failed}
+
+
+def _scheduled_refresh():
+    """Wrapper for the scheduler — logs and catches all errors."""
+    logger.info("Scheduled price refresh starting...")
+    try:
+        result = _run_price_refresh()
+        logger.info(f"Scheduled refresh result: {result['updated']} updated, {len(result['failed'])} failed")
+    except Exception as e:
+        logger.error(f"Scheduled refresh error: {e}")
+
+
+# APScheduler — runs daily at 5:30 PM US/Eastern (after market close)
+scheduler = None
+
+@asynccontextmanager
+async def lifespan(app):
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    global scheduler
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        _scheduled_refresh,
+        CronTrigger(hour=17, minute=30, timezone="US/Eastern"),
+        id="daily_price_refresh",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("Price refresh scheduler started — daily at 5:30 PM ET")
+    yield
+    scheduler.shutdown()
+    logger.info("Price refresh scheduler stopped")
+
+
+app = FastAPI(lifespan=lifespan)
 
 from fastapi.middleware.cors import CORSMiddleware
 origins = ["http://localhost:3000", "*"]
@@ -271,10 +423,21 @@ def delete_asset(ticker: str, db=Depends(get_db)):
 
 # ── Price Refresh (Yahoo Finance) ─────────────────────────────────────
 
-@app.get("/assets/last-refresh")
-def last_refresh(db=Depends(get_db)):
-    """Return the most recent last_updated timestamp from any asset."""
-    import math
+@app.post("/assets/refresh-prices")
+def refresh_prices():
+    """Manual trigger for price refresh (uses shared _run_price_refresh)."""
+    result = _run_price_refresh()
+    return {
+        "message": f"Updated {result['updated']} prices, {len(result['failed'])} failed.",
+        "updated": result["updated"],
+        "failed": result["failed"],
+    }
+
+
+@app.get("/assets/refresh-status")
+def refresh_status(db=Depends(get_db)):
+    """Return auto-refresh schedule info and last refresh timestamp."""
+    # Last refresh
     latest = None
     docs = db.collection('asset_prices').stream()
     for doc in docs:
@@ -285,136 +448,18 @@ def last_refresh(db=Depends(get_db)):
                 lu = lu.replace(tzinfo=None)
             if latest is None or lu > latest:
                 latest = lu
-    return {"last_refresh": (latest.isoformat() + "Z") if latest else None}
 
-
-@app.post("/assets/refresh-prices")
-def refresh_prices(db=Depends(get_db)):
-    """Fetch latest prices from Yahoo Finance with previous close for daily change."""
-    import yfinance as yf
-    import pandas as pd
-    import math
-
-    docs = db.collection('asset_prices').stream()
-    tickers = []
-    for doc in docs:
-        d = doc.to_dict()
-        if d.get('ticker'):
-            tickers.append(d['ticker'])
-
-    if not tickers:
-        return {"message": "No assets to update.", "updated": 0, "failed": []}
-
-    # Fetch 5 days to reliably get previous close (handles weekends/holidays)
-    try:
-        data = yf.download(tickers, period='5d', progress=False)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Yahoo Finance error: {e}")
-
-    if data.empty:
-        return {"message": "No price data returned.", "updated": 0, "failed": tickers}
-
-    is_multi = isinstance(data.columns, pd.MultiIndex)
-    now = datetime.utcnow()
-    today_str = now.strftime('%Y-%m-%d')
-
-    updated = 0
-    failed = []
-    asset_batch = db.batch()
-    asset_batch_count = 0
-    history_batch = db.batch()
-    history_batch_count = 0
-
-    for ticker in tickers:
-        try:
-            # Extract OHLC series for this ticker
-            if is_multi:
-                close_series = data['Close'][ticker].dropna()
-                open_series = data['Open'][ticker].dropna()
-                high_series = data['High'][ticker].dropna()
-                low_series = data['Low'][ticker].dropna()
-                vol_series = data['Volume'][ticker].dropna() if 'Volume' in data.columns.get_level_values(0) else pd.Series()
-            else:
-                close_series = data['Close'].dropna()
-                open_series = data['Open'].dropna()
-                high_series = data['High'].dropna()
-                low_series = data['Low'].dropna()
-                vol_series = data['Volume'].dropna() if 'Volume' in data.columns else pd.Series()
-
-            if len(close_series) < 1:
-                failed.append(ticker)
-                continue
-
-            # Latest day's data
-            close_price = float(close_series.iloc[-1])
-            open_price = float(open_series.iloc[-1]) if len(open_series) > 0 else 0.0
-            high_price = float(high_series.iloc[-1]) if len(high_series) > 0 else 0.0
-            low_price = float(low_series.iloc[-1]) if len(low_series) > 0 else 0.0
-            volume = float(vol_series.iloc[-1]) if len(vol_series) > 0 else 0.0
-            latest_date = close_series.index[-1].strftime('%Y-%m-%d')
-
-            # Previous close (second-to-last day)
-            prev_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else None
-
-            # Daily change
-            daily_change = None
-            daily_change_pct = None
-            if prev_close and prev_close > 0 and not math.isnan(prev_close):
-                daily_change = round(close_price - prev_close, 2)
-                daily_change_pct = round((daily_change / prev_close) * 100, 2)
-
-            if close_price > 0 and not math.isnan(close_price):
-                # Update asset_prices (denormalized for fast UI reads)
-                doc_ref = db.collection('asset_prices').document(ticker)
-                asset_batch.update(doc_ref, {
-                    "price": round(close_price, 2),
-                    "previous_close": round(prev_close, 2) if prev_close and not math.isnan(prev_close) else None,
-                    "daily_change": daily_change,
-                    "daily_change_pct": daily_change_pct,
-                    "last_updated": now,
-                })
-                asset_batch_count += 1
-
-                # Store in price_history collection for analytics
-                history_doc_id = f"{ticker}_{latest_date}"
-                history_ref = db.collection('price_history').document(history_doc_id)
-                history_batch.set(history_ref, {
-                    "ticker": ticker,
-                    "date": latest_date,
-                    "open": round(open_price, 2),
-                    "high": round(high_price, 2),
-                    "low": round(low_price, 2),
-                    "close": round(close_price, 2),
-                    "previous_close": round(prev_close, 2) if prev_close and not math.isnan(prev_close) else None,
-                    "volume": round(volume, 0) if not math.isnan(volume) else 0,
-                })
-                history_batch_count += 1
-
-                updated += 1
-
-                if asset_batch_count >= 400:
-                    asset_batch.commit()
-                    asset_batch = db.batch()
-                    asset_batch_count = 0
-
-                if history_batch_count >= 400:
-                    history_batch.commit()
-                    history_batch = db.batch()
-                    history_batch_count = 0
-            else:
-                failed.append(ticker)
-        except Exception as e:
-            failed.append(ticker)
-
-    if asset_batch_count > 0:
-        asset_batch.commit()
-    if history_batch_count > 0:
-        history_batch.commit()
+    # Next scheduled run
+    next_run = None
+    if scheduler and scheduler.get_job("daily_price_refresh"):
+        job = scheduler.get_job("daily_price_refresh")
+        if job.next_run_time:
+            next_run = job.next_run_time.isoformat()
 
     return {
-        "message": f"Updated {updated} prices, {len(failed)} failed.",
-        "updated": updated,
-        "failed": failed,
+        "last_refresh": (latest.isoformat() + "Z") if latest else None,
+        "next_scheduled": next_run,
+        "schedule": "Daily at 5:30 PM ET (after market close)",
     }
 
 

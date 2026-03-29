@@ -4,22 +4,26 @@ import { useState, useRef, useEffect } from "react";
 import ImportButton from "../../components/ImportButton";
 
 export default function SettingsPage() {
-  // Last refresh timestamp
+  // Refresh status
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
+  const [nextScheduled, setNextScheduled] = useState<string | null>(null);
+  const [schedule, setSchedule] = useState<string>("");
 
-  const fetchLastRefresh = async () => {
+  const fetchRefreshStatus = async () => {
     try {
-      const res = await fetch("/api/assets/last-refresh");
+      const res = await fetch("/api/assets/refresh-status");
       if (res.ok) {
         const data = await res.json();
         setLastRefresh(data.last_refresh);
+        setNextScheduled(data.next_scheduled);
+        setSchedule(data.schedule || "");
       }
     } catch {}
   };
 
-  useEffect(() => { fetchLastRefresh(); }, []);
+  useEffect(() => { fetchRefreshStatus(); }, []);
 
-  const formatLastRefresh = (iso: string | null) => {
+  const formatTimestamp = (iso: string | null) => {
     if (!iso) return "Never";
     const d = new Date(iso);
     return d.toLocaleDateString(undefined, {
@@ -29,7 +33,7 @@ export default function SettingsPage() {
     });
   };
 
-  // Refresh prices
+  // Manual refresh
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState<{
     message: string;
@@ -59,7 +63,7 @@ export default function SettingsPage() {
       if (res.ok) {
         const data = await res.json();
         setRefreshResult(data);
-        fetchLastRefresh();
+        fetchRefreshStatus();
       } else {
         setRefreshResult({ message: "Failed to refresh prices", updated: 0, failed: [] });
       }
@@ -270,17 +274,29 @@ export default function SettingsPage() {
         <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
           <div className="flex justify-between items-start">
             <div>
-              <h3 className="text-lg font-semibold text-white">Refresh Stock Prices</h3>
+              <h3 className="text-lg font-semibold text-white">Stock Prices</h3>
               <p className="text-sm text-gray-400 mt-1">
-                Fetch latest closing prices from Yahoo Finance for all registered assets.
-                Updates market values, unrealized P&L, daily change, and theme exposure.
+                Prices update automatically from Yahoo Finance after market close.
+                You can also trigger a manual refresh.
               </p>
-              <p className="text-xs mt-2">
-                <span className="text-gray-500">Last refreshed: </span>
-                <span className={lastRefresh ? "text-gray-300" : "text-amber-400"}>
-                  {formatLastRefresh(lastRefresh)}
-                </span>
-              </p>
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <div className="bg-gray-900/50 rounded-lg p-2.5 border border-gray-700">
+                  <span className="text-gray-500">Schedule</span>
+                  <p className="text-gray-300 mt-0.5">{schedule || "Daily at 5:30 PM ET"}</p>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-2.5 border border-gray-700">
+                  <span className="text-gray-500">Last updated</span>
+                  <p className={`mt-0.5 ${lastRefresh ? "text-gray-300" : "text-amber-400"}`}>
+                    {formatTimestamp(lastRefresh)}
+                  </p>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-2.5 border border-gray-700">
+                  <span className="text-gray-500">Next auto-refresh</span>
+                  <p className="text-gray-300 mt-0.5">
+                    {nextScheduled ? formatTimestamp(nextScheduled) : "Pending"}
+                  </p>
+                </div>
+              </div>
             </div>
             <button
               onClick={handleRefreshPrices}
@@ -293,7 +309,7 @@ export default function SettingsPage() {
                   Refreshing...
                 </span>
               ) : (
-                "Refresh Prices"
+                "Manual Refresh"
               )}
             </button>
           </div>
