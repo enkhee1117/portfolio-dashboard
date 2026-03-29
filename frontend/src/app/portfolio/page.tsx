@@ -159,7 +159,62 @@ function PortfolioContent() {
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500" />
             </div>
           ) : (
-            <PositionTable positions={positions} />
+            <>
+              {/* Top Gainers & Losers */}
+              {positions.filter(p => p.quantity > 0).length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
+                    <h3 className="text-sm font-semibold text-green-400 uppercase tracking-widest mb-3">Top Gainers</h3>
+                    <div className="space-y-1.5">
+                      {positions
+                        .filter(p => p.quantity > 0 && p.unrealized_pnl > 0)
+                        .sort((a, b) => b.unrealized_pnl - a.unrealized_pnl)
+                        .slice(0, 10)
+                        .map(pos => {
+                          const pct = pos.average_price > 0 ? ((pos.current_price - pos.average_price) / pos.average_price) * 100 : 0;
+                          return (
+                            <div key={pos.ticker} className="flex items-center justify-between py-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="text-white font-medium text-sm w-14">{pos.ticker}</span>
+                                <span className="text-xs text-gray-500">${pos.current_price.toFixed(2)}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-green-400 text-sm font-medium">+${pos.unrealized_pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                                <span className="text-green-400/70 text-xs ml-2 w-16 inline-block text-right">+{pct.toFixed(1)}%</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                  <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
+                    <h3 className="text-sm font-semibold text-red-400 uppercase tracking-widest mb-3">Top Losers</h3>
+                    <div className="space-y-1.5">
+                      {positions
+                        .filter(p => p.quantity > 0 && p.unrealized_pnl < 0)
+                        .sort((a, b) => a.unrealized_pnl - b.unrealized_pnl)
+                        .slice(0, 10)
+                        .map(pos => {
+                          const pct = pos.average_price > 0 ? ((pos.current_price - pos.average_price) / pos.average_price) * 100 : 0;
+                          return (
+                            <div key={pos.ticker} className="flex items-center justify-between py-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="text-white font-medium text-sm w-14">{pos.ticker}</span>
+                                <span className="text-xs text-gray-500">${pos.current_price.toFixed(2)}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-red-400 text-sm font-medium">${pos.unrealized_pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                                <span className="text-red-400/70 text-xs ml-2 w-16 inline-block text-right">{pct.toFixed(1)}%</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                </div>
+              )}
+              <PositionTable positions={positions} />
+            </>
           )
         )}
 
