@@ -259,10 +259,28 @@ export default function SettingsPage() {
           <p className="mt-1 text-sm text-gray-400">
             Data management and portfolio maintenance
           </p>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {[
+              { id: "backup", label: "Backup" },
+              { id: "backfill", label: "Backfill" },
+              { id: "themes", label: "Themes" },
+              { id: "export", label: "Export" },
+              { id: "prices", label: "Prices" },
+              { id: "import", label: "Import" },
+            ].map((s) => (
+              <a
+                key={s.id}
+                href={`#${s.id}`}
+                className="px-2.5 py-1 text-xs bg-gray-800 border border-gray-700 rounded-md text-gray-400 hover:text-white hover:border-gray-600 transition-colors"
+              >
+                {s.label}
+              </a>
+            ))}
+          </div>
         </div>
 
         {/* Export / Restore Backup */}
-        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+        <div id="backup" className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg scroll-mt-20">
           <h3 className="text-lg font-semibold text-white mb-1">Backup &amp; Restore</h3>
           <p className="text-sm text-gray-400 mb-5">
             Export all trade history and asset themes as a JSON snapshot. Use restore to recover data from a backup.
@@ -336,7 +354,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Backfill Historical Prices */}
-        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+        <div id="backfill" className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg scroll-mt-20">
           <div className="flex justify-between items-start">
             <div>
               <h3 className="text-lg font-semibold text-white">Backfill Historical Prices</h3>
@@ -366,7 +384,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Theme Management */}
-        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+        <div id="themes" className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg scroll-mt-20">
           <h3 className="text-lg font-semibold text-white mb-1">Theme Management</h3>
           <p className="text-sm text-gray-400 mb-5">
             Rename, delete, or combine investment themes across all assets.
@@ -449,7 +467,7 @@ export default function SettingsPage() {
                               <span className="text-[10px] text-gray-500 mr-2">{t.count}</span>
                               <button
                                 onClick={() => handleDeleteTheme(t.name, field)}
-                                className="text-gray-600 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="text-gray-600 hover:text-red-400 text-xs transition-colors"
                                 title="Remove theme"
                               >
                                 &times;
@@ -467,7 +485,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Export Trades CSV */}
-        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+        <div id="export" className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg scroll-mt-20">
           <div className="flex justify-between items-start">
             <div>
               <h3 className="text-lg font-semibold text-white">Export Trades (CSV)</h3>
@@ -494,7 +512,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Refresh Prices */}
-        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+        <div id="prices" className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg scroll-mt-20">
           <div className="flex justify-between items-start">
             <div>
               <h3 className="text-lg font-semibold text-white">Stock Prices</h3>
@@ -594,7 +612,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Import Data */}
-        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+        <div id="import" className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg scroll-mt-20">
           <div className="flex justify-between items-start">
             <div>
               <h3 className="text-lg font-semibold text-white">Import Data</h3>

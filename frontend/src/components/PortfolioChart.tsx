@@ -62,7 +62,7 @@ export default function PortfolioChart() {
   return (
     <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
       {/* Header */}
-      <div className="flex justify-between items-start mb-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-3 mb-4">
         <div>
           <h3 className="text-lg font-semibold text-gray-200">Portfolio Value</h3>
           {data.length > 0 && (
@@ -79,7 +79,7 @@ export default function PortfolioChart() {
         </div>
 
         {/* Period selector */}
-        <div className="flex gap-1 bg-gray-900/50 rounded-lg p-0.5">
+        <div className="flex gap-0.5 bg-gray-900/50 rounded-lg p-0.5 flex-shrink-0">
           {PERIODS.map((p) => (
             <button
               key={p.key}

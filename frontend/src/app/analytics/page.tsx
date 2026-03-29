@@ -217,11 +217,20 @@ export default function AnalyticsPage() {
               <p className="mt-1 text-2xl font-bold text-white">{concentrationMetrics.top3Pct.toFixed(1)}%</p>
             </div>
             <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
-              <p className="text-xs text-gray-400 uppercase tracking-widest">HHI Index</p>
-              <p className="mt-1 text-2xl font-bold text-white">{concentrationMetrics.hhi}</p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {concentrationMetrics.hhi < 1500 ? "Well diversified" : concentrationMetrics.hhi < 2500 ? "Moderate" : "Concentrated"}
+              <p className="text-xs text-gray-400 uppercase tracking-widest">Diversification</p>
+              <p className="mt-1 text-2xl font-bold text-white">
+                {concentrationMetrics.hhi < 1500 ? "Good" : concentrationMetrics.hhi < 2500 ? "Moderate" : "Low"}
               </p>
+              {/* Visual gauge bar */}
+              <div className="mt-2 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    concentrationMetrics.hhi < 1500 ? "bg-green-500" : concentrationMetrics.hhi < 2500 ? "bg-amber-500" : "bg-red-500"
+                  }`}
+                  style={{ width: `${Math.max(5, Math.min(100, 100 - (concentrationMetrics.hhi / 100)))}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-gray-600 mt-1">HHI: {concentrationMetrics.hhi}</p>
             </div>
             <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
               <p className="text-xs text-gray-400 uppercase tracking-widest">Top Themes</p>

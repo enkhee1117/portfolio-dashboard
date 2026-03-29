@@ -367,7 +367,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                       <th className="px-3 py-2 text-right">Qty</th>
                       <th className="px-3 py-2 text-right">Price</th>
                       <th className="px-3 py-2 text-right">Total</th>
-                      <th className="px-3 py-2 text-right">Running Qty</th>
+                      <th className="px-3 py-2 text-right" title="Position size after this trade">Position</th>
                       <th className="px-3 py-2 text-center">Status</th>
                     </tr>
                   </thead>
