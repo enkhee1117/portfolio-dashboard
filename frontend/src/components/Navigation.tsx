@@ -4,8 +4,7 @@ import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard" },
-  { href: "/positions", label: "Positions" },
-  { href: "/trades", label: "Trades" },
+  { href: "/portfolio", label: "Portfolio" },
   { href: "/assets", label: "Assets" },
   { href: "/analytics", label: "Analytics" },
   { href: "/settings", label: "Settings" },

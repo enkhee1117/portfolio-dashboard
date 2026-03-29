@@ -340,7 +340,7 @@ export default function Home() {
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-200">Top Positions</h2>
             <a
-              href="/positions"
+              href="/portfolio"
               className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
             >
               View all {activePositions.length} &rarr;
