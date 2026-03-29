@@ -1,21 +1,91 @@
 # Data Architecture Guide
 
-How data flows, is stored, and should be handled in this portfolio tracker. Follow these principles for all future development.
+How data flows, is stored, and should be handled in this portfolio tracker. This document defines the engineering principles that all future development must follow. Written for a system that will scale from a single user to hundreds of traders.
 
 ---
 
-## Core Principle: Compute Once, Read Many
+## Foundational Principles
 
-The #1 lesson from building this app: **never recompute what can be precomputed and stored.** Financial data changes at known intervals (market close, trade entry), not on every page load.
+These five principles govern every data decision. Violating any of them creates technical debt that compounds as the system scales.
 
-| Pattern | Bad | Good |
-|---------|-----|------|
-| Portfolio value | Replay 2,058 trades on every request | Read precomputed snapshot (1 doc) |
-| Historical chart | 184k price lookups per render | Read from portfolio_snapshots (~54 docs) |
-| Price data | 261k individual docs | Consolidated per-ticker docs (~570 docs) |
-| Theme baskets | Compute from scratch each time | Read from price_series (20 docs per theme) |
+### 1. Compute Once, Read Many
 
-**Rule**: If data changes ≤ once per day, precompute and cache it.
+Financial data changes at known, discrete intervals: market close (daily) and trade entry (user-initiated). Between those events, all derived data is static.
+
+**Never recompute on read.** Precompute on write.
+
+| Trigger | What to precompute | Where to store |
+|---------|-------------------|----------------|
+| Trade added/edited/deleted | Today's portfolio snapshot | `portfolio_snapshots/{today}` |
+| Daily price refresh (5:30 PM ET) | Portfolio snapshot + price series update | `portfolio_snapshots` + `price_series` |
+| New asset registered | Historical price series for that ticker | `price_series/{ticker}` |
+
+Every GET endpoint should read precomputed data. The only computation allowed on read is a cache-miss fallback that immediately stores its result.
+
+### 2. Idempotency
+
+Every operation must produce the same result whether run once or ten times, without side effects or wasted resources.
+
+**Why this matters at scale**: Distributed systems have retries, duplicate webhook deliveries, users double-clicking buttons, cron jobs that overlap, and crash-recovery replays. If any operation isn't idempotent, data corrupts silently.
+
+| Operation | How idempotency is ensured |
+|-----------|---------------------------|
+| Price backfill | Checks `price_series` for existing tickers, skips them |
+| Portfolio snapshot | Uses date as document ID — same date overwrites, doesn't duplicate |
+| Trade import | Signature deduplication `(date, ticker, side, price, quantity)` |
+| Price refresh | `merge=True` on Firestore writes — updates, never duplicates |
+| Asset creation | 409 conflict if ticker already exists |
+| Theme rename | Scans all docs, replaces matching values — running twice changes nothing |
+
+**Rules**:
+- Use natural keys as document IDs (ticker, date) — not auto-generated IDs for reference data
+- Always use `merge=True` or `set()` with full replacement — never `create()` for data that may already exist
+- Check-before-write for external API calls — don't re-fetch data you already have
+- Design every POST/PUT endpoint so that calling it twice with the same payload produces the same state
+
+### 3. Data Locality
+
+Keep related data together. Minimize the number of documents and collections a single page load touches.
+
+**Target**: < 100 Firestore reads per page load. Ideally < 10.
+
+| Pattern | Bad | Good | Improvement |
+|---------|-----|------|-------------|
+| Price history | 261k individual docs | 570 consolidated per-ticker docs | 458x fewer docs |
+| Portfolio load | Replay 2,058 trades + 571 price lookups | Read 1 snapshot doc | 2,629x fewer reads |
+| History chart (1Y) | 184k batch doc reads (29s) | 54 snapshot docs (<1s) | 3,407x fewer reads |
+
+### 4. Separation of Concerns: Source vs Derived
+
+**Source data** (trades, asset registrations) is the ground truth. It's written by users and must never be lost.
+
+**Derived data** (snapshots, price series, theme baskets) is computed from source data. It can always be regenerated. Losing it is inconvenient, not catastrophic.
+
+| Layer | Collection | Can be regenerated? | Backup priority |
+|-------|-----------|--------------------|-----------------|
+| Source | `trades` | No — user-entered | Critical |
+| Source | `asset_prices` | Partially (themes are user-entered, prices are fetched) | High |
+| Derived | `portfolio_snapshots` | Yes — from trades + asset_prices | Low |
+| Derived | `price_series` | Yes — from Yahoo Finance | Low |
+| Legacy | `price_history` | Yes — subset of price_series | None |
+
+**Rule**: Never modify source data as a side effect of reading derived data. Never store derived data in source collections.
+
+### 5. Fail Gracefully, Never Silently
+
+Every background operation (price fetch, snapshot computation, wash sale detection) must:
+- Catch exceptions without crashing the parent operation
+- Log the failure with context
+- Return partial results rather than nothing
+- Allow retry without side effects (see: Idempotency)
+
+```python
+# Good: Import succeeds even if wash sale detection fails
+try:
+    wash_sales.detect_wash_sales(all_trades, db)
+except Exception as wash_err:
+    print(f"Wash sales detection failed (trades were still imported): {wash_err}")
+```
 
 ---
 
@@ -37,16 +107,17 @@ Document ID: auto-generated
 }
 ```
 - **Append-only** in practice (edits/deletes are rare corrections)
-- All calculations derive from this collection
-- ~2,000-10,000 docs for an active trader
+- All portfolio calculations derive from this collection
+- Every trade change triggers snapshot recomputation
+- Deduplication via signature: `(date, ticker, side, price, quantity)`
 
-### `asset_prices` — Asset Registry
+### `asset_prices` — Asset Registry (Denormalized)
 ```
 Document ID: ticker (e.g., "AAPL")
 {
   ticker: "AAPL",
-  price: 248.80,                    // latest close
-  previous_close: 253.90,           // for daily change
+  price: 248.80,
+  previous_close: 253.90,
   daily_change: -5.10,
   daily_change_pct: -2.01,
   primary_theme: "AI",
@@ -54,10 +125,10 @@ Document ID: ticker (e.g., "AAPL")
   last_updated: Timestamp
 }
 ```
-- **Denormalized** for fast UI reads (no joins needed)
+- **Denormalized for O(1) reads** — no joins needed for dashboard
 - Updated daily by price refresh scheduler
-- Themes are plain strings (no separate themes collection)
-- ~500-600 docs
+- Themes are plain strings (no separate themes collection — themes exist as long as assets reference them)
+- Document ID = ticker for direct lookups
 
 ### `price_series` — Consolidated Historical Prices
 ```
@@ -67,17 +138,17 @@ Document ID: ticker (e.g., "AAPL")
   prices: {
     "2023-06-26": 182.88,
     "2023-06-27": 185.63,
-    ...                              // ~700 entries per year
+    ...
   },
   last_updated: Timestamp
 }
 ```
 - **One doc per ticker** with ALL daily closes in a map
-- ~17KB per ticker per year → well within 1MB Firestore limit
-- Updated daily by price refresh (appends one entry)
-- Auto-populated when new asset is created
-- Used for: theme basket comparison, any future charting/analytics
-- ~570 docs (one per traded/tracked ticker)
+- ~17KB per ticker per year — Firestore 1MB limit supports 50+ years
+- Auto-populated on asset creation (background thread)
+- Appended daily by price refresh
+- `merge=True` ensures idempotent writes
+- Used for: theme basket comparison, individual stock charts, any analytics
 
 ### `portfolio_snapshots` — Precomputed Portfolio State
 ```
@@ -85,156 +156,191 @@ Document ID: "YYYY-MM-DD" (e.g., "2026-03-29")
 {
   date: "2026-03-29",
   total_value: 120877.00,
-  positions: [                       // full detail for today only
-    {ticker, quantity, average_price, current_price,
-     market_value, unrealized_pnl, realized_pnl,
-     primary_theme, secondary_theme}
-  ],
+  positions: [{ticker, quantity, average_price, current_price,
+               market_value, unrealized_pnl, realized_pnl,
+               primary_theme, secondary_theme}],
   computed_at: Timestamp
 }
 ```
-- **One doc per day** — ~365 docs per year
-- Today's snapshot has full `positions` array (used by GET /portfolio)
-- Historical snapshots have `positions: []` (only `total_value` needed for charts)
-- Recomputed on: trade add/edit/delete, daily price refresh
-- Used by: Dashboard (current portfolio), Portfolio Value chart (history)
+- **One doc per day** — date as natural key ensures idempotency
+- Today's snapshot includes full `positions` array (used by GET /portfolio)
+- Historical snapshots store only `total_value` (positions omitted to save space)
+- Triggers: trade CRUD, daily price refresh, manual backfill
 
-### `price_history` — Legacy (Deprecated)
-```
-Document ID: "{ticker}_{date}" (e.g., "AAPL_2024-01-15")
-```
-- **261k individual docs** — replaced by `price_series`
-- Still exists but no longer written to by new code
-- Can be deleted once `price_series` is fully populated
+### `price_history` — DEPRECATED
+- 261k individual docs — replaced by `price_series`
+- No longer written to. Safe to delete after verifying `price_series` coverage.
 
 ---
 
 ## Data Flow Patterns
 
-### When a New Asset is Added
+### New Asset Added
 ```
-User adds AAPL via UI
+POST /assets {ticker: "NVDA", primary_theme: "AI", ...}
     │
-    ├── 1. Create asset_prices/AAPL doc (themes, price)
+    ├── 1. Write asset_prices/NVDA (sync, immediate)
     │
-    └── 2. Background thread: fetch_and_store_ticker_prices("AAPL")
-            └── yf.download("AAPL", start="2020-01-01")
-            └── Write to price_series/AAPL (one doc, ~1500 price points)
+    └── 2. Background thread (non-blocking):
+            fetch_and_store_ticker_prices(db, "NVDA")
+            └── yf.download("NVDA", start="2020-01-01")
+            └── Write price_series/NVDA {prices: {...}} (merge=True)
 ```
-**Key**: Historical prices are fetched immediately on asset creation. No need to wait for backfill.
 
-### When a Trade is Added/Edited/Deleted
+### Trade Created/Edited/Deleted
 ```
-Trade CRUD operation
+POST|PUT|DELETE /trades/...
     │
-    ├── 1. Write/update/delete trade in trades collection
-    ├── 2. Run wash sale detection for affected ticker
-    └── 3. Recompute today's portfolio_snapshots/{today}
-            └── calculator.compute_and_store_snapshot(db)
+    ├── 1. Write trade to trades collection
+    ├── 2. Wash sale detection (best-effort, non-fatal)
+    └── 3. Recompute portfolio_snapshots/{today} (best-effort)
 ```
-**Key**: Snapshot is always fresh after any trade change.
 
-### Daily at 5:30 PM ET (After Market Close)
+### Daily Refresh (5:30 PM ET)
 ```
-APScheduler triggers _scheduled_refresh()
+APScheduler → _scheduled_refresh()
     │
-    ├── 1. _run_price_refresh()
-    │       ├── yf.download(all_tickers, period='5d')
-    │       ├── Update asset_prices (price, daily_change, previous_close)
-    │       └── Append today's close to price_series/{ticker}
-    │
-    └── 2. calculator.compute_and_store_snapshot(db)
-            └── Store today's portfolio value + positions
+    ├── 1. yf.download(all_tickers, period='5d')     ← 1 API call
+    ├── 2. Update asset_prices (price, daily_change)  ← batch write
+    ├── 3. Append to price_series/{ticker}            ← per-ticker update
+    └── 4. compute_and_store_snapshot(db)             ← 1 snapshot write
 ```
-**Key**: One Yahoo Finance call per day for ALL tickers. One snapshot computation. All subsequent reads are O(1).
 
-### When Dashboard Loads
+### Dashboard Load
 ```
 GET /portfolio
     │
-    ├── 1. Check portfolio_snapshots/{today}
-    │       └── If exists and has positions → return directly (1 read)
+    ├── Read portfolio_snapshots/{today}  ← 1 Firestore read
+    │     └── If exists with positions → return (cache hit)
     │
-    └── 2. If no snapshot → calculate_portfolio(db) + store snapshot
-            └── Reads trades + asset_prices (first load of the day only)
+    └── Cache miss → calculate_portfolio(db) → store → return
 ```
-**Key**: First visitor of the day pays the computation cost. Everyone after gets cached data.
 
-### When Portfolio Chart Loads
+### Backfill (One-Time)
 ```
-GET /portfolio/history?period=1y
+POST /portfolio/backfill-history
     │
-    └── Read all portfolio_snapshots docs where date >= start
-        └── Return [{date, value}, ...] (~54 docs for 1Y)
+    ├── 1. Find all tickers from trades
+    ├── 2. Check price_series for existing data    ← idempotent check
+    ├── 3. Download only NEW tickers from Yahoo    ← skip existing
+    ├── 4. Write to price_series (merge=True)      ← idempotent write
+    ├── 5. Load all price_series into memory
+    ├── 6. Replay trades at weekly intervals
+    └── 7. Write portfolio_snapshots (date as ID)  ← idempotent write
 ```
-**Key**: No trade replay. No price lookups. Just reading precomputed snapshots.
 
 ---
 
-## Anti-Patterns to Avoid
+## Anti-Patterns
 
-### 1. Never Store One Doc Per Data Point Per Day
+### 1. One Doc Per Data Point Per Day
 ```
-BAD:  price_history/AAPL_2024-01-01, AAPL_2024-01-02, ... (261k docs)
-GOOD: price_series/AAPL → {prices: {"2024-01-01": 182.88, ...}} (1 doc)
+BAD:  price_history/AAPL_2024-01-01, AAPL_2024-01-02, ...
+GOOD: price_series/AAPL → {prices: {"2024-01-01": 182.88, ...}}
 ```
-Firestore charges per read. 261k reads vs 1 read is a 261,000x cost difference.
 
-### 2. Never Recompute What Doesn't Change
+### 2. Recomputing Static Data
 ```
-BAD:  Replay all trades on every GET /portfolio request
-GOOD: Precompute snapshot once, read on every request
+BAD:  Replay all trades on every GET /portfolio
+GOOD: Read precomputed snapshot, recompute only on trade/price changes
 ```
-Portfolio value only changes when: (a) trade is added/modified, (b) prices update. Between those events, it's static.
 
-### 3. Never Fetch External Data That You Already Have
+### 3. Re-fetching Existing Data
 ```
-BAD:  Backfill re-downloads prices for all 570 tickers every time
-GOOD: Check which tickers already have data, only download new ones
+BAD:  Backfill downloads all 570 tickers every run
+GOOD: Check existing, download only missing tickers
 ```
-Use `get_tickers_with_price_data(db)` to check existing data before calling Yahoo Finance.
 
-### 4. Never Block the Response on Background Work
+### 4. Blocking on Background Work
 ```
-BAD:  create_asset() waits for yfinance download before responding
-GOOD: create_asset() spawns background thread, responds immediately
+BAD:  create_asset() waits 10s for yfinance before responding
+GOOD: Spawn daemon thread, respond immediately
 ```
-Historical price fetch takes 5-10 seconds. The user shouldn't wait. Use `threading.Thread(daemon=True)`.
 
-### 5. Never Load Entire Collections Into Memory
+### 5. Full Collection Scans
 ```
 BAD:  db.collection('price_history').stream() → 261k docs in memory
-GOOD: Query only what you need with filters, or use consolidated docs
+GOOD: Targeted queries, consolidated docs, or pagination
 ```
-If you must scan, use `.limit()`, `.where()`, or paginate.
 
-### 6. Never Make One API Call Per Ticker
+### 6. One API Call Per Entity
 ```
-BAD:  for ticker in tickers: yf.download(ticker, ...)  (570 calls)
-GOOD: yf.download(all_tickers, ...)  (1 call)
+BAD:  for ticker in 570_tickers: yf.download(ticker)
+GOOD: yf.download(all_570_tickers)  # batched internally
 ```
-Yahoo Finance's `download()` handles batching internally. One call for all tickers.
+
+### 7. Non-Idempotent Writes
+```
+BAD:  db.collection('snapshots').add(data)  # creates duplicate on retry
+GOOD: db.collection('snapshots').document(date_str).set(data)  # overwrites on retry
+```
 
 ---
 
-## Scaling Considerations
+## Scaling Roadmap
 
-### For Hundreds of Users
-- **Price refresh**: Server-side scheduler runs once per day, shared by all users
-- **Snapshots**: Each user would have their own `portfolio_snapshots` subcollection
-- **Price data**: Shared across all users (same stock = same price)
-- **Trades**: Per-user collection or user_id field
+### Current State (Single User)
+```
+Trades:     ~2,000 docs
+Assets:     ~570 docs
+Prices:     ~570 docs (consolidated)
+Snapshots:  ~150 docs (weekly)
+Reads/load: ~5-10
+```
 
-### For Thousands of Tickers
-- `price_series` scales linearly: 1000 tickers = 1000 docs, each ~50KB
-- Yahoo Finance batch download handles up to ~500 tickers per call; chunk larger sets
-- Theme basket comparison: limit to top 10-15 themes with most holdings
+### Phase 1: Multi-User (Hundreds of Users)
+```
+Architecture changes:
+├── Add user_id to trades collection (or per-user subcollection)
+├── portfolio_snapshots becomes per-user: users/{uid}/snapshots/{date}
+├── price_series stays SHARED (same stock = same price for everyone)
+├── asset_prices stays SHARED (themes could become per-user later)
+├── Authentication gate (password, OAuth, or Firebase Auth)
+└── Rate limit trade creation per user
 
-### For Real-Time Data
-- Current architecture is daily (post-market close)
-- For intraday: add WebSocket connection to price feed
-- Store intraday ticks in a separate `intraday_prices` collection
-- Never mix intraday with daily close data
+Firestore reads per user page load: still ~5-10 (snapshots are per-user)
+Price refresh: still 1 call/day (shared across all users)
+```
+
+### Phase 2: Performance (Thousands of Tickers)
+```
+Architecture changes:
+├── Chunk yf.download() into batches of 400 tickers
+├── price_series: if any ticker exceeds 500KB, split by year
+│   └── price_series/AAPL_2024, price_series/AAPL_2025
+├── Theme basket computation: cache in theme_basket_snapshots/{theme}
+├── Add Redis/Memcached for hot-path caching (portfolio, prices)
+└── Consider Cloud Functions for background price refresh
+
+Firestore reads per page load: still ~5-10 with caching
+Price refresh: chunked into 2-3 yfinance calls
+```
+
+### Phase 3: Real-Time (Intraday Data)
+```
+Architecture changes:
+├── WebSocket connection to market data feed (Polygon, Alpaca, etc.)
+├── New collection: intraday_prices/{ticker}_{date}
+│   └── Contains minute-level or tick-level data
+├── NEVER mix intraday with daily close data
+├── Separate intraday portfolio valuation pipeline
+├── Server-Sent Events (SSE) for pushing live updates to frontend
+└── Consider TimescaleDB or InfluxDB for time-series at this scale
+
+Firestore: still used for trades, assets, themes, daily snapshots
+Time-series DB: used for intraday prices, tick data, live P&L
+```
+
+### Phase 4: Enterprise (Compliance, Audit)
+```
+Architecture changes:
+├── Immutable audit log: every trade change logged with before/after
+├── Soft deletes only — never hard delete trades
+├── Role-based access (admin, trader, viewer)
+├── Regulatory reporting endpoints (Form 8949, wash sale summaries)
+├── Data retention policies (7-year minimum for tax records)
+└── Encrypted backups with versioning
+```
 
 ---
 
@@ -242,10 +348,13 @@ Yahoo Finance's `download()` handles batching internally. One call for all ticke
 
 Before building any feature that touches data:
 
-- [ ] **Can this be precomputed?** If data changes ≤ daily, compute and store it
-- [ ] **Does the feature need a new collection?** Use consolidated docs (one per entity, not one per data point)
-- [ ] **Will it fetch external data?** Check if data already exists first. Fetch only what's missing
-- [ ] **How many Firestore reads?** Target < 100 reads per page load. Never scan entire collections
-- [ ] **Does it block the user?** Long operations (> 2s) should run in background threads
-- [ ] **Is it idempotent?** Running the same operation twice should produce the same result without wasting resources
-- [ ] **What triggers recomputation?** Define exactly when cached data becomes stale and needs refresh
+- [ ] **Idempotent?** Running it twice produces the same state without side effects
+- [ ] **Can it be precomputed?** If data changes ≤ daily, compute on write, not on read
+- [ ] **Consolidated storage?** One doc per entity, not one doc per data point
+- [ ] **External data check?** Verify data doesn't already exist before fetching
+- [ ] **Read budget?** Target < 100 Firestore reads per page load
+- [ ] **Non-blocking?** Operations > 2s run in background threads
+- [ ] **Stale trigger defined?** Document exactly what events invalidate cached data
+- [ ] **Graceful failure?** Errors are caught, logged, and don't crash parent operations
+- [ ] **Natural keys?** Use meaningful IDs (ticker, date) not auto-generated ones for reference data
+- [ ] **Source vs derived?** Never modify source data as a side effect. Derived data can always be regenerated
