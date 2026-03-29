@@ -242,10 +242,20 @@ export default function TradeHistory() {
                                     <input
                                         type="text"
                                         placeholder="2025-01-15"
-                                        value={editingTrade.date ? new Date(editingTrade.date).toISOString().slice(0, 10) : ''}
+                                        value={(() => {
+                                            if (!editingTrade.date) return '';
+                                            // If it's already a short string (user typing), show as-is
+                                            if (editingTrade.date.length <= 10) return editingTrade.date;
+                                            // If it's an ISO string, extract the date part
+                                            try {
+                                                const d = new Date(editingTrade.date);
+                                                if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+                                            } catch {}
+                                            return editingTrade.date;
+                                        })()}
                                         onChange={e => {
                                             const val = e.target.value;
-                                            // Allow typing — validate on blur/submit
+                                            // If it's a complete valid date, store as ISO
                                             if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
                                                 const dateObj = new Date(val + 'T12:00:00');
                                                 if (!isNaN(dateObj.getTime())) {
