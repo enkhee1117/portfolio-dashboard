@@ -6,7 +6,7 @@ How data flows, is stored, and should be handled in this portfolio tracker. This
 
 ## Foundational Principles
 
-These five principles govern every data decision. Violating any of them creates technical debt that compounds as the system scales.
+These six principles govern every data decision. Violating any of them creates technical debt that compounds as the system scales.
 
 ### 1. Compute Once, Read Many
 
@@ -30,7 +30,7 @@ Every operation must produce the same result whether run once or ten times, with
 
 | Operation | How idempotency is ensured |
 |-----------|---------------------------|
-| Price backfill | Checks `price_series` for existing tickers, skips them |
+| Price backfill | Checks each ticker's last price date, downloads only missing days |
 | Portfolio snapshot | Uses date as document ID — same date overwrites, doesn't duplicate |
 | Trade import | Signature deduplication `(date, ticker, side, price, quantity)` |
 | Price refresh | `merge=True` on Firestore writes — updates, never duplicates |
@@ -43,7 +43,44 @@ Every operation must produce the same result whether run once or ten times, with
 - Check-before-write for external API calls — don't re-fetch data you already have
 - Design every POST/PUT endpoint so that calling it twice with the same payload produces the same state
 
-### 3. Data Locality
+### 3. Freshness Over Existence
+
+**"Exists" is not the same as "complete" or "current."** This is the most subtle data bug in any caching system. Data can exist but be stale, partial, or have gaps.
+
+**The backfill lesson**: The original backfill checked "does this ticker have price data?" — if yes, skip entirely. But a ticker could have data through March 27 and be missing March 28-29. The fix: check **when** the data was last updated, not **whether** it exists.
+
+This principle applies everywhere:
+
+| Check | Wrong question | Right question |
+|-------|---------------|----------------|
+| Price backfill | "Does AAPL have price data?" | "What is AAPL's last price date? Is it current?" |
+| Portfolio snapshot | "Does today's snapshot exist?" | "Does it exist AND have positions? (historical snapshots have empty positions)" |
+| Daily refresh | "Did we refresh today?" | "Did we refresh after market close today?" |
+| Theme assignment | "Does this asset have themes?" | "Does it have BOTH primary AND secondary themes?" |
+
+**Rules**:
+- Never treat "exists" as a boolean. Check the **recency** and **completeness** of the data.
+- Store `last_updated` timestamps on every cached/derived document.
+- When skipping work, compare against a **freshness threshold** (e.g., last known date vs today), not just presence.
+- Design gap-fill logic: fetch only what's missing, not everything or nothing.
+
+```python
+# BAD: Binary exists check — misses stale data
+existing = get_tickers_with_price_data(db)  # returns set of tickers
+new_tickers = all_tickers - existing  # skips stale tickers!
+
+# GOOD: Freshness check — fills gaps
+last_dates = get_tickers_last_price_date(db)  # returns {ticker: last_date}
+for ticker in all_tickers:
+    if ticker not in last_dates:
+        download_full_history(ticker)  # new ticker
+    elif last_dates[ticker] < today:
+        download_since(ticker, last_dates[ticker])  # fill gap
+    else:
+        skip(ticker)  # already fresh
+```
+
+### 4. Data Locality
 
 Keep related data together. Minimize the number of documents and collections a single page load touches.
 
@@ -55,7 +92,7 @@ Keep related data together. Minimize the number of documents and collections a s
 | Portfolio load | Replay 2,058 trades + 571 price lookups | Read 1 snapshot doc | 2,629x fewer reads |
 | History chart (1Y) | 184k batch doc reads (29s) | 54 snapshot docs (<1s) | 3,407x fewer reads |
 
-### 4. Separation of Concerns: Source vs Derived
+### 5. Separation of Concerns: Source vs Derived
 
 **Source data** (trades, asset registrations) is the ground truth. It's written by users and must never be lost.
 
@@ -71,7 +108,7 @@ Keep related data together. Minimize the number of documents and collections a s
 
 **Rule**: Never modify source data as a side effect of reading derived data. Never store derived data in source collections.
 
-### 5. Fail Gracefully, Never Silently
+### 6. Fail Gracefully, Never Silently
 
 Every background operation (price fetch, snapshot computation, wash sale detection) must:
 - Catch exceptions without crashing the parent operation
@@ -216,18 +253,22 @@ GET /portfolio
     └── Cache miss → calculate_portfolio(db) → store → return
 ```
 
-### Backfill (One-Time)
+### Backfill (Idempotent, Gap-Aware)
 ```
 POST /portfolio/backfill-history
     │
     ├── 1. Find all tickers from trades
-    ├── 2. Check price_series for existing data    ← idempotent check
-    ├── 3. Download only NEW tickers from Yahoo    ← skip existing
-    ├── 4. Write to price_series (merge=True)      ← idempotent write
+    ├── 2. For each ticker, check last price date   ← freshness check
+    │       ├── No data → classify as NEW            (download full history)
+    │       ├── Last date < today → classify as STALE (download only gap)
+    │       └── Last date = today → classify as FRESH (skip entirely)
+    ├── 3. Batch download NEW + STALE tickers        ← 1 yfinance call
+    ├── 4. Write to price_series (merge=True)        ← appends, never overwrites
     ├── 5. Load all price_series into memory
     ├── 6. Replay trades at weekly intervals
-    └── 7. Write portfolio_snapshots (date as ID)  ← idempotent write
+    └── 7. Write portfolio_snapshots (date as ID)    ← idempotent write
 ```
+**Second run**: 0 new, 0 stale, 570 fresh → no API calls, only snapshot recomputation.
 
 ---
 
@@ -245,11 +286,14 @@ BAD:  Replay all trades on every GET /portfolio
 GOOD: Read precomputed snapshot, recompute only on trade/price changes
 ```
 
-### 3. Re-fetching Existing Data
+### 3. Binary Existence Checks on Cached Data
 ```
-BAD:  Backfill downloads all 570 tickers every run
-GOOD: Check existing, download only missing tickers
+BAD:  if ticker in existing_tickers: skip()     # misses stale data!
+GOOD: if last_date[ticker] >= today: skip()      # checks freshness
+      elif ticker in last_date: fill_gap(ticker)  # fills missing days
+      else: download_full(ticker)                  # truly new
 ```
+"Has data" ≠ "has current data." Always check recency, not just presence.
 
 ### 4. Blocking on Background Work
 ```
@@ -274,6 +318,16 @@ GOOD: yf.download(all_570_tickers)  # batched internally
 BAD:  db.collection('snapshots').add(data)  # creates duplicate on retry
 GOOD: db.collection('snapshots').document(date_str).set(data)  # overwrites on retry
 ```
+
+### 8. All-or-Nothing Data Operations
+```
+BAD:  if ticker has ANY data → skip entirely (misses 2-day gap)
+      if ticker has NO data → download 3 years of history
+GOOD: Check what's missing, fetch ONLY the gap
+      570 tickers with 2-day gap = 1,140 price points to fetch
+      NOT 0 (skip all) or 400,000 (re-download everything)
+```
+Partial data is the norm, not the exception. Design every fetch/sync operation to handle the spectrum between "empty" and "complete."
 
 ---
 
@@ -351,10 +405,11 @@ Before building any feature that touches data:
 - [ ] **Idempotent?** Running it twice produces the same state without side effects
 - [ ] **Can it be precomputed?** If data changes ≤ daily, compute on write, not on read
 - [ ] **Consolidated storage?** One doc per entity, not one doc per data point
-- [ ] **External data check?** Verify data doesn't already exist before fetching
+- [ ] **Freshness check?** Don't just check if data exists — check if it's current and complete. Compare last_updated or last date against today, not just presence
 - [ ] **Read budget?** Target < 100 Firestore reads per page load
 - [ ] **Non-blocking?** Operations > 2s run in background threads
 - [ ] **Stale trigger defined?** Document exactly what events invalidate cached data
 - [ ] **Graceful failure?** Errors are caught, logged, and don't crash parent operations
 - [ ] **Natural keys?** Use meaningful IDs (ticker, date) not auto-generated ones for reference data
 - [ ] **Source vs derived?** Never modify source data as a side effect. Derived data can always be regenerated
+- [ ] **Gap-aware?** Can the operation handle partial data? Does it fetch only what's missing, not everything or nothing?
