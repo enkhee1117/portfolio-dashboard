@@ -1,6 +1,6 @@
 "use client";
-import { PortfolioSnapshot } from "../app/types";
-import { useState, useMemo } from "react";
+import { PortfolioSnapshot, Trade } from "../app/types";
+import { useState, useMemo, useEffect } from "react";
 
 interface PositionTableProps {
   positions: PortfolioSnapshot[];
@@ -12,6 +12,11 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [showZero, setShowZero] = useState(false);
 
+  // Stock detail modal
+  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [tickerTrades, setTickerTrades] = useState<Trade[]>([]);
+  const [loadingTrades, setLoadingTrades] = useState(false);
+
   const handleSort = (key: keyof PortfolioSnapshot) => {
     if (sortKey === key) {
       setSortOrder(sortOrder === "asc" ? "desc" : "asc");
@@ -21,7 +26,6 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
     }
   };
 
-  // Separate negative-quantity positions for flagging
   const negativePositions = useMemo(
     () => positions.filter((p) => p.quantity < -0.0001),
     [positions]
@@ -30,7 +34,6 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
   const sortedAndFilteredPositions = useMemo(() => {
     const q = filterText.toLowerCase();
     let data = positions.filter((p) => {
-      // Hide zero-exposure unless toggled on
       if (!showZero && Math.abs(p.quantity) < 0.0001) return false;
       return (
         p.ticker.toLowerCase().includes(q) ||
@@ -51,7 +54,49 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
     return data;
   }, [positions, filterText, sortKey, sortOrder, showZero]);
 
-  const zeroCount = useMemo(() => positions.filter((p) => Math.abs(p.quantity) < 0.0001).length, [positions]);
+  const zeroCount = useMemo(
+    () => positions.filter((p) => Math.abs(p.quantity) < 0.0001).length,
+    [positions]
+  );
+
+  // Fetch trades for a ticker when modal opens
+  const openStockDetail = (ticker: string) => {
+    setSelectedTicker(ticker);
+    setLoadingTrades(true);
+    setTickerTrades([]);
+    fetch("/api/trades")
+      .then((r) => r.json())
+      .then((allTrades: Trade[]) => {
+        const filtered = allTrades
+          .filter((t) => t.ticker === ticker)
+          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        setTickerTrades(filtered);
+      })
+      .catch(console.error)
+      .finally(() => setLoadingTrades(false));
+  };
+
+  const selectedPosition = useMemo(
+    () => positions.find((p) => p.ticker === selectedTicker),
+    [positions, selectedTicker]
+  );
+
+  // Running totals for the trade history
+  const tradesWithRunning = useMemo(() => {
+    if (!tickerTrades.length) return [];
+    // Sort chronologically for running calc
+    const chronological = [...tickerTrades].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+    let runningQty = 0;
+    const mapped = chronological.map((t) => {
+      if (t.side === "Buy") runningQty += t.quantity;
+      else runningQty -= t.quantity;
+      return { ...t, runningQty };
+    });
+    // Return in reverse chronological order (newest first)
+    return mapped.reverse();
+  }, [tickerTrades]);
 
   const SortIcon = ({ colKey }: { colKey: keyof PortfolioSnapshot }) => {
     if (sortKey !== colKey)
@@ -146,11 +191,12 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
           </thead>
           <tbody className="divide-y divide-gray-700">
             {sortedAndFilteredPositions.map((pos) => {
-              const isNegative = pos.quantity < 0;
+              const isNegative = pos.quantity < -0.0001;
               return (
                 <tr
                   key={pos.ticker}
-                  className={`hover:bg-gray-700/50 transition-colors ${
+                  onClick={() => openStockDetail(pos.ticker)}
+                  className={`hover:bg-gray-700/50 transition-colors cursor-pointer ${
                     isNegative ? "bg-red-900/10" : ""
                   }`}
                 >
@@ -220,6 +266,135 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
           </tbody>
         </table>
       </div>
+
+      {/* Stock Detail Modal */}
+      {selectedTicker && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+          onClick={(e) => { if (e.target === e.currentTarget) setSelectedTicker(null); }}
+        >
+          <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-4xl max-h-[85vh] flex flex-col">
+            {/* Header */}
+            <div className="p-6 pb-4 border-b border-gray-700">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h2 className="text-xl font-bold text-white">{selectedTicker}</h2>
+                  {selectedPosition && (
+                    <div className="flex gap-4 mt-2 text-sm">
+                      {selectedPosition.primary_theme && (
+                        <span className="px-2 py-0.5 rounded text-xs bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">
+                          {selectedPosition.primary_theme}
+                        </span>
+                      )}
+                      {selectedPosition.secondary_theme && (
+                        <span className="px-2 py-0.5 rounded text-xs bg-cyan-900/40 text-cyan-300 border border-cyan-700/50">
+                          {selectedPosition.secondary_theme}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setSelectedTicker(null)}
+                  className="text-gray-400 hover:text-white text-xl px-2 hover:bg-gray-700 rounded"
+                >
+                  &times;
+                </button>
+              </div>
+
+              {/* Position summary */}
+              {selectedPosition && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
+                  <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Quantity</p>
+                    <p className="text-sm font-bold text-white mt-0.5">{selectedPosition.quantity.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Avg Price</p>
+                    <p className="text-sm font-bold text-white mt-0.5">${selectedPosition.average_price.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Current</p>
+                    <p className="text-sm font-bold text-white mt-0.5">${selectedPosition.current_price.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Unrealized</p>
+                    <p className={`text-sm font-bold mt-0.5 ${selectedPosition.unrealized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      ${selectedPosition.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Realized</p>
+                    <p className={`text-sm font-bold mt-0.5 ${selectedPosition.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      ${selectedPosition.realized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Trade history */}
+            <div className="flex-1 overflow-auto p-6 pt-4">
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">
+                Trade History ({tickerTrades.length} trades)
+              </h3>
+
+              {loadingTrades ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500" />
+                </div>
+              ) : tickerTrades.length === 0 ? (
+                <p className="text-gray-500 text-sm italic py-4">No trades found.</p>
+              ) : (
+                <table className="min-w-full text-left text-sm whitespace-nowrap">
+                  <thead className="text-gray-500 uppercase tracking-wider text-xs sticky top-0 bg-gray-800">
+                    <tr>
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Side</th>
+                      <th className="px-3 py-2 text-right">Qty</th>
+                      <th className="px-3 py-2 text-right">Price</th>
+                      <th className="px-3 py-2 text-right">Total</th>
+                      <th className="px-3 py-2 text-right">Running Qty</th>
+                      <th className="px-3 py-2 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700/50">
+                    {tradesWithRunning.map((t, i) => (
+                      <tr key={t.id || i} className="hover:bg-gray-700/30">
+                        <td className="px-3 py-2 text-gray-300">
+                          {new Date(t.date).toLocaleDateString()}
+                        </td>
+                        <td className={`px-3 py-2 font-semibold ${t.side === "Buy" ? "text-green-400" : "text-red-400"}`}>
+                          {t.side}
+                        </td>
+                        <td className="px-3 py-2 text-right text-gray-300">
+                          {t.quantity.toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2 text-right text-gray-300">
+                          ${t.price.toFixed(2)}
+                        </td>
+                        <td className="px-3 py-2 text-right text-white font-medium">
+                          ${(t.quantity * t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-3 py-2 text-right text-gray-400">
+                          {t.runningQty.toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {t.is_wash_sale && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-red-600 text-red-100 rounded">
+                              WASH
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -40,7 +40,6 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
     [longPositions]
   );
 
-  // Primary theme aggregation
   const primaryData: ThemeEntry[] = useMemo(() => {
     const map: Record<string, number> = {};
     longPositions.forEach((p) => {
@@ -52,7 +51,6 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
       .sort((a, b) => b.value - a.value);
   }, [longPositions]);
 
-  // Secondary theme aggregation
   const secondaryData: ThemeEntry[] = useMemo(() => {
     const map: Record<string, number> = {};
     longPositions.forEach((p) => {
@@ -64,7 +62,6 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
       .sort((a, b) => b.value - a.value);
   }, [longPositions]);
 
-  // Stocks in the selected theme
   const selectedStocks = useMemo(() => {
     if (!selectedTheme || !selectedType) return [];
     return longPositions
@@ -90,6 +87,11 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
       setSelectedTheme(name);
       setSelectedType(type);
     }
+  };
+
+  const closeModal = () => {
+    setSelectedTheme(null);
+    setSelectedType(null);
   };
 
   const renderChart = (
@@ -175,107 +177,85 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
         {renderChart(secondaryData, "secondary", "Secondary Theme Exposure")}
       </div>
 
-      {/* Expanded stock detail panel */}
+      {/* Theme detail MODAL */}
       {selectedTheme && selectedStocks.length > 0 && (
-        <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h3 className="text-lg font-semibold text-white">
-                {selectedTheme}
-                <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded bg-gray-700 text-gray-400">
-                  {selectedType === "primary" ? "Primary" : "Secondary"}
-                </span>
-              </h3>
-              <p className="text-xs text-gray-400 mt-1">
-                {selectedStocks.length} position
-                {selectedStocks.length !== 1 ? "s" : ""} &middot; $
-                {selectedTotal.toLocaleString(undefined, {
-                  minimumFractionDigits: 0,
-                })}{" "}
-                total &middot;{" "}
-                {totalValue > 0
-                  ? ((selectedTotal / totalValue) * 100).toFixed(1)
-                  : 0}
-                % of portfolio
-              </p>
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+          onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+        >
+          <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-3xl max-h-[80vh] flex flex-col">
+            {/* Header */}
+            <div className="flex justify-between items-center p-6 pb-4 border-b border-gray-700">
+              <div>
+                <h3 className="text-lg font-semibold text-white">
+                  {selectedTheme}
+                  <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded bg-gray-700 text-gray-400">
+                    {selectedType === "primary" ? "Primary" : "Secondary"}
+                  </span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-1">
+                  {selectedStocks.length} position
+                  {selectedStocks.length !== 1 ? "s" : ""} &middot; $
+                  {selectedTotal.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                  {" "}total &middot;{" "}
+                  {totalValue > 0 ? ((selectedTotal / totalValue) * 100).toFixed(1) : 0}% of portfolio
+                </p>
+              </div>
+              <button
+                onClick={closeModal}
+                className="text-gray-400 hover:text-white text-xl px-2 hover:bg-gray-700 rounded"
+              >
+                &times;
+              </button>
             </div>
-            <button
-              onClick={() => {
-                setSelectedTheme(null);
-                setSelectedType(null);
-              }}
-              className="text-sm text-gray-400 hover:text-white px-3 py-1 rounded hover:bg-gray-700"
-            >
-              Close
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm whitespace-nowrap">
-              <thead className="text-gray-500 uppercase tracking-wider text-xs border-b border-gray-700">
-                <tr>
-                  <th className="px-4 py-2">Ticker</th>
-                  <th className="px-4 py-2">Primary</th>
-                  <th className="px-4 py-2">Secondary</th>
-                  <th className="px-4 py-2 text-right">Qty</th>
-                  <th className="px-4 py-2 text-right">Mkt Value</th>
-                  <th className="px-4 py-2 text-right">% of Theme</th>
-                  <th className="px-4 py-2 text-right">% of Portfolio</th>
-                  <th className="px-4 py-2 text-right">Unreal. P&L</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700/50">
-                {selectedStocks.map((s) => (
-                  <tr key={s.ticker} className="hover:bg-gray-700/30">
-                    <td className="px-4 py-2.5 font-medium text-white">
-                      {s.ticker}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">
-                        {s.primary_theme || "--"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className="px-1.5 py-0.5 rounded text-xs bg-cyan-900/40 text-cyan-300 border border-cyan-700/50">
-                        {s.secondary_theme || "--"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-gray-300">
-                      {s.quantity.toLocaleString()}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-gray-300">
-                      $
-                      {s.market_value.toLocaleString(undefined, {
-                        minimumFractionDigits: 0,
-                      })}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-gray-400">
-                      {selectedTotal > 0
-                        ? ((s.market_value / selectedTotal) * 100).toFixed(1)
-                        : 0}
-                      %
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-gray-400">
-                      {totalValue > 0
-                        ? ((s.market_value / totalValue) * 100).toFixed(1)
-                        : 0}
-                      %
-                    </td>
-                    <td
-                      className={`px-4 py-2.5 text-right font-medium ${
-                        s.unrealized_pnl >= 0
-                          ? "text-green-400"
-                          : "text-red-400"
-                      }`}
-                    >
-                      $
-                      {s.unrealized_pnl.toLocaleString(undefined, {
-                        minimumFractionDigits: 0,
-                      })}
-                    </td>
+
+            {/* Scrollable table */}
+            <div className="overflow-auto flex-1 p-6 pt-0">
+              <table className="min-w-full text-left text-sm whitespace-nowrap">
+                <thead className="text-gray-500 uppercase tracking-wider text-xs sticky top-0 bg-gray-800">
+                  <tr>
+                    <th className="px-4 py-3">Ticker</th>
+                    <th className="px-4 py-3">Primary</th>
+                    <th className="px-4 py-3">Secondary</th>
+                    <th className="px-4 py-3 text-right">Qty</th>
+                    <th className="px-4 py-3 text-right">Mkt Value</th>
+                    <th className="px-4 py-3 text-right">% of Theme</th>
+                    <th className="px-4 py-3 text-right">% Portfolio</th>
+                    <th className="px-4 py-3 text-right">Unreal. P&L</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-700/50">
+                  {selectedStocks.map((s) => (
+                    <tr key={s.ticker} className="hover:bg-gray-700/30">
+                      <td className="px-4 py-2.5 font-medium text-white">{s.ticker}</td>
+                      <td className="px-4 py-2.5">
+                        <span className="px-1.5 py-0.5 rounded text-xs bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">
+                          {s.primary_theme || "--"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="px-1.5 py-0.5 rounded text-xs bg-cyan-900/40 text-cyan-300 border border-cyan-700/50">
+                          {s.secondary_theme || "--"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-gray-300">{s.quantity.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-300">
+                        ${s.market_value.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-gray-400">
+                        {selectedTotal > 0 ? ((s.market_value / selectedTotal) * 100).toFixed(1) : 0}%
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-gray-400">
+                        {totalValue > 0 ? ((s.market_value / totalValue) * 100).toFixed(1) : 0}%
+                      </td>
+                      <td className={`px-4 py-2.5 text-right font-medium ${s.unrealized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+                        ${s.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
