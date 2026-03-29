@@ -13,6 +13,7 @@ export default function Home() {
   const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [showManualTrade, setShowManualTrade] = useState(false);
+  const [pnlView, setPnlView] = useState<'ytd' | 'all'>('ytd');
 
   const toast = useToast();
   useCmdK();
@@ -49,10 +50,16 @@ export default function Home() {
     fetchPortfolio();
   }, []);
 
-  const totalPnL = positions.reduce((acc, pos) => acc + pos.realized_pnl + pos.unrealized_pnl, 0);
+  const totalMarketValue = positions.reduce((acc, pos) => acc + pos.market_value, 0);
   const totalUnrealized = positions.reduce((acc, pos) => acc + pos.unrealized_pnl, 0);
   const totalRealized = positions.reduce((acc, pos) => acc + pos.realized_pnl, 0);
-  const totalMarketValue = positions.reduce((acc, pos) => acc + pos.market_value, 0);
+  const totalRealizedYtd = positions.reduce((acc, pos) => acc + (pos.realized_pnl_ytd || 0), 0);
+  const totalPnL = totalUnrealized + totalRealized;
+  const totalPnLYtd = totalUnrealized + totalRealizedYtd;
+
+  // Display values based on toggle
+  const displayRealized = pnlView === 'ytd' ? totalRealizedYtd : totalRealized;
+  const displayTotalPnl = pnlView === 'ytd' ? totalPnLYtd : totalPnL;
 
   const activePositions = useMemo(() => positions.filter(p => p.quantity > 0), [positions]);
   const unassignedPositions = useMemo(
@@ -140,7 +147,28 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Summary Cards — click to copy value */}
+        {/* P&L Period Toggle + Summary Cards */}
+        <div className="flex items-center justify-between">
+          <div className="flex gap-1 bg-gray-800 rounded-lg p-0.5 border border-gray-700">
+            <button
+              onClick={() => setPnlView('ytd')}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                pnlView === 'ytd' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              YTD
+            </button>
+            <button
+              onClick={() => setPnlView('all')}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                pnlView === 'all' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              All Time
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div onClick={() => copyValue(totalMarketValue)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
             <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">Net Liquidity</h3>
@@ -148,10 +176,12 @@ export default function Home() {
               ${totalMarketValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
-          <div onClick={() => copyValue(totalPnL)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
-            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">Total P&L</h3>
-            <p className={`mt-2 text-2xl font-bold ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              ${totalPnL.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+          <div onClick={() => copyValue(displayTotalPnl)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">
+              {pnlView === 'ytd' ? 'YTD P&L' : 'Total P&L'}
+            </h3>
+            <p className={`mt-2 text-2xl font-bold ${displayTotalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              ${displayTotalPnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
           <div onClick={() => copyValue(totalUnrealized)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
@@ -160,10 +190,12 @@ export default function Home() {
               ${totalUnrealized.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
-          <div onClick={() => copyValue(totalRealized)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
-            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">Realized</h3>
-            <p className={`mt-2 text-2xl font-bold ${totalRealized >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              ${totalRealized.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+          <div onClick={() => copyValue(displayRealized)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">
+              {pnlView === 'ytd' ? 'Realized YTD' : 'Realized All'}
+            </h3>
+            <p className={`mt-2 text-2xl font-bold ${displayRealized >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              ${displayRealized.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
         </div>

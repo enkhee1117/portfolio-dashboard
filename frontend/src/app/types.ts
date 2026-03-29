@@ -23,6 +23,7 @@ export interface PortfolioSnapshot {
     market_value: number;
     unrealized_pnl: number;
     realized_pnl: number;
+    realized_pnl_ytd?: number;
     primary_theme?: string | null;
     secondary_theme?: string | null;
 }

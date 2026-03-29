@@ -19,7 +19,10 @@ def calculate_portfolio(db):
     # CRITICAL: sort by date so weighted average cost basis is calculated correctly
     trades.sort(key=lambda t: t.date)
 
-    positions = defaultdict(lambda: {"quantity": 0.0, "cost_basis": 0.0, "realized_pnl": 0.0})
+    # YTD boundary: January 1st of current year
+    ytd_start = datetime(datetime.utcnow().year, 1, 1)
+
+    positions = defaultdict(lambda: {"quantity": 0.0, "cost_basis": 0.0, "realized_pnl": 0.0, "realized_pnl_ytd": 0.0})
 
     for trade in trades:
         ticker = trade.ticker
@@ -39,6 +42,8 @@ def calculate_portfolio(db):
                 avg_cost = positions[ticker]["cost_basis"]
                 pnl = (price - avg_cost) * qty
                 positions[ticker]["realized_pnl"] += pnl
+                if trade.date >= ytd_start:
+                    positions[ticker]["realized_pnl_ytd"] += pnl
                 positions[ticker]["quantity"] -= qty
 
                 # Reset cost basis when position is fully closed to avoid stale values
@@ -80,6 +85,7 @@ def calculate_portfolio(db):
                 "market_value": round(market_val, 2),
                 "unrealized_pnl": round(unrealized, 2),
                 "realized_pnl": round(data["realized_pnl"], 2),
+                "realized_pnl_ytd": round(data["realized_pnl_ytd"], 2),
                 "date": datetime.utcnow().replace(tzinfo=None),
                 "primary_theme": p_theme,
                 "secondary_theme": s_theme
@@ -110,6 +116,7 @@ def compute_and_store_snapshot(db, date_str: str | None = None):
             "market_value": p["market_value"],
             "unrealized_pnl": p["unrealized_pnl"],
             "realized_pnl": p["realized_pnl"],
+            "realized_pnl_ytd": p.get("realized_pnl_ytd", 0.0),
             "primary_theme": p.get("primary_theme"),
             "secondary_theme": p.get("secondary_theme"),
         })

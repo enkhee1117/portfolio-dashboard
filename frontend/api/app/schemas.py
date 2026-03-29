@@ -34,6 +34,7 @@ class PortfolioSnapshotBase(BaseModel):
     market_value: float
     unrealized_pnl: float
     realized_pnl: float
+    realized_pnl_ytd: float = 0.0
     primary_theme: Optional[str] = None
     secondary_theme: Optional[str] = None
 
