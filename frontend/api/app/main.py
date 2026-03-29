@@ -68,26 +68,32 @@ def compute_rsi(closes: list[float], period: int = 14) -> float | None:
 
 def compute_and_store_rsi(db):
     """Compute RSI for all tickers from price_series and store in asset_prices."""
+    # Load set of tickers that exist in asset_prices (avoid NOT_FOUND on update)
+    asset_tickers = set()
+    for doc in db.collection('asset_prices').stream():
+        asset_tickers.add(doc.id)
+
     docs = db.collection('price_series').stream()
     batch = db.batch()
     batch_count = 0
     computed = 0
 
     for doc in docs:
+        ticker = doc.id
+        if ticker not in asset_tickers:
+            continue
+
         d = doc.to_dict()
-        ticker = d.get('ticker', doc.id)
         prices_map = d.get('prices', {})
         if not prices_map:
             continue
 
-        # Sort dates and extract closes
         sorted_dates = sorted(prices_map.keys())
         closes = [prices_map[dt] for dt in sorted_dates]
 
         rsi = compute_rsi(closes)
         if rsi is not None:
-            doc_ref = db.collection('asset_prices').document(ticker)
-            batch.update(doc_ref, {"rsi": rsi})
+            batch.update(db.collection('asset_prices').document(ticker), {"rsi": rsi})
             batch_count += 1
             computed += 1
 
