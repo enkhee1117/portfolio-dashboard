@@ -1,9 +1,34 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import ImportButton from "../../components/ImportButton";
 
 export default function SettingsPage() {
+  // Last refresh timestamp
+  const [lastRefresh, setLastRefresh] = useState<string | null>(null);
+
+  const fetchLastRefresh = async () => {
+    try {
+      const res = await fetch("/api/assets/last-refresh");
+      if (res.ok) {
+        const data = await res.json();
+        setLastRefresh(data.last_refresh);
+      }
+    } catch {}
+  };
+
+  useEffect(() => { fetchLastRefresh(); }, []);
+
+  const formatLastRefresh = (iso: string | null) => {
+    if (!iso) return "Never";
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, {
+      year: "numeric", month: "long", day: "numeric",
+    }) + " at " + d.toLocaleTimeString(undefined, {
+      hour: "numeric", minute: "2-digit",
+    });
+  };
+
   // Refresh prices
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState<{
@@ -34,6 +59,7 @@ export default function SettingsPage() {
       if (res.ok) {
         const data = await res.json();
         setRefreshResult(data);
+        fetchLastRefresh();
       } else {
         setRefreshResult({ message: "Failed to refresh prices", updated: 0, failed: [] });
       }
@@ -247,7 +273,13 @@ export default function SettingsPage() {
               <h3 className="text-lg font-semibold text-white">Refresh Stock Prices</h3>
               <p className="text-sm text-gray-400 mt-1">
                 Fetch latest closing prices from Yahoo Finance for all registered assets.
-                Updates market values, unrealized P&L, and theme exposure calculations.
+                Updates market values, unrealized P&L, daily change, and theme exposure.
+              </p>
+              <p className="text-xs mt-2">
+                <span className="text-gray-500">Last refreshed: </span>
+                <span className={lastRefresh ? "text-gray-300" : "text-amber-400"}>
+                  {formatLastRefresh(lastRefresh)}
+                </span>
               </p>
             </div>
             <button

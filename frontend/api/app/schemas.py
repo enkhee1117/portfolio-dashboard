@@ -61,6 +61,22 @@ class AssetUpdate(BaseModel):
 
 class Asset(AssetBase):
     last_updated: Optional[datetime] = None
+    previous_close: Optional[float] = None
+    daily_change: Optional[float] = None
+    daily_change_pct: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --- Price History (for charting & analytics) ---
+
+class PriceHistoryEntry(BaseModel):
+    ticker: str
+    date: str  # YYYY-MM-DD
+    open: float
+    high: float
+    low: float
+    close: float
+    previous_close: Optional[float] = None
+    volume: Optional[float] = None
 

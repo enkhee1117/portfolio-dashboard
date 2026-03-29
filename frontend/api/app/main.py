@@ -230,10 +230,29 @@ def delete_asset(ticker: str, db=Depends(get_db)):
 
 # ── Price Refresh (Yahoo Finance) ─────────────────────────────────────
 
+@app.get("/assets/last-refresh")
+def last_refresh(db=Depends(get_db)):
+    """Return the most recent last_updated timestamp from any asset."""
+    import math
+    latest = None
+    docs = db.collection('asset_prices').stream()
+    for doc in docs:
+        d = doc.to_dict()
+        lu = d.get('last_updated')
+        if lu:
+            if hasattr(lu, 'replace'):
+                lu = lu.replace(tzinfo=None)
+            if latest is None or lu > latest:
+                latest = lu
+    return {"last_refresh": latest.isoformat() if latest else None}
+
+
 @app.post("/assets/refresh-prices")
 def refresh_prices(db=Depends(get_db)):
-    """Fetch latest closing prices from Yahoo Finance for all assets and update Firestore."""
+    """Fetch latest prices from Yahoo Finance with previous close for daily change."""
     import yfinance as yf
+    import pandas as pd
+    import math
 
     docs = db.collection('asset_prices').stream()
     tickers = []
@@ -245,51 +264,111 @@ def refresh_prices(db=Depends(get_db)):
     if not tickers:
         return {"message": "No assets to update.", "updated": 0, "failed": []}
 
-    # yfinance handles batching internally — one call for all tickers
+    # Fetch 5 days to reliably get previous close (handles weekends/holidays)
     try:
-        data = yf.download(tickers, period='1d', progress=False)
+        data = yf.download(tickers, period='5d', progress=False)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Yahoo Finance error: {e}")
 
     if data.empty:
         return {"message": "No price data returned.", "updated": 0, "failed": tickers}
 
-    # Handle single vs multi-ticker response format
-    is_multi = isinstance(data.columns, __import__('pandas').MultiIndex)
+    is_multi = isinstance(data.columns, pd.MultiIndex)
+    now = datetime.utcnow()
+    today_str = now.strftime('%Y-%m-%d')
 
     updated = 0
     failed = []
-    batch = db.batch()
-    batch_count = 0
+    asset_batch = db.batch()
+    asset_batch_count = 0
+    history_batch = db.batch()
+    history_batch_count = 0
 
     for ticker in tickers:
         try:
+            # Extract OHLC series for this ticker
             if is_multi:
-                close_price = float(data['Close'][ticker].iloc[-1])
+                close_series = data['Close'][ticker].dropna()
+                open_series = data['Open'][ticker].dropna()
+                high_series = data['High'][ticker].dropna()
+                low_series = data['Low'][ticker].dropna()
+                vol_series = data['Volume'][ticker].dropna() if 'Volume' in data.columns.get_level_values(0) else pd.Series()
             else:
-                # Single ticker — columns are just 'Close', 'Open', etc.
-                close_price = float(data['Close'].iloc[-1])
+                close_series = data['Close'].dropna()
+                open_series = data['Open'].dropna()
+                high_series = data['High'].dropna()
+                low_series = data['Low'].dropna()
+                vol_series = data['Volume'].dropna() if 'Volume' in data.columns else pd.Series()
 
-            if close_price > 0:
+            if len(close_series) < 1:
+                failed.append(ticker)
+                continue
+
+            # Latest day's data
+            close_price = float(close_series.iloc[-1])
+            open_price = float(open_series.iloc[-1]) if len(open_series) > 0 else 0.0
+            high_price = float(high_series.iloc[-1]) if len(high_series) > 0 else 0.0
+            low_price = float(low_series.iloc[-1]) if len(low_series) > 0 else 0.0
+            volume = float(vol_series.iloc[-1]) if len(vol_series) > 0 else 0.0
+            latest_date = close_series.index[-1].strftime('%Y-%m-%d')
+
+            # Previous close (second-to-last day)
+            prev_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else None
+
+            # Daily change
+            daily_change = None
+            daily_change_pct = None
+            if prev_close and prev_close > 0 and not math.isnan(prev_close):
+                daily_change = round(close_price - prev_close, 2)
+                daily_change_pct = round((daily_change / prev_close) * 100, 2)
+
+            if close_price > 0 and not math.isnan(close_price):
+                # Update asset_prices (denormalized for fast UI reads)
                 doc_ref = db.collection('asset_prices').document(ticker)
-                batch.update(doc_ref, {
+                asset_batch.update(doc_ref, {
                     "price": round(close_price, 2),
-                    "last_updated": datetime.utcnow(),
+                    "previous_close": round(prev_close, 2) if prev_close and not math.isnan(prev_close) else None,
+                    "daily_change": daily_change,
+                    "daily_change_pct": daily_change_pct,
+                    "last_updated": now,
                 })
-                batch_count += 1
+                asset_batch_count += 1
+
+                # Store in price_history collection for analytics
+                history_doc_id = f"{ticker}_{latest_date}"
+                history_ref = db.collection('price_history').document(history_doc_id)
+                history_batch.set(history_ref, {
+                    "ticker": ticker,
+                    "date": latest_date,
+                    "open": round(open_price, 2),
+                    "high": round(high_price, 2),
+                    "low": round(low_price, 2),
+                    "close": round(close_price, 2),
+                    "previous_close": round(prev_close, 2) if prev_close and not math.isnan(prev_close) else None,
+                    "volume": round(volume, 0) if not math.isnan(volume) else 0,
+                })
+                history_batch_count += 1
+
                 updated += 1
 
-                if batch_count >= 400:
-                    batch.commit()
-                    batch = db.batch()
-                    batch_count = 0
+                if asset_batch_count >= 400:
+                    asset_batch.commit()
+                    asset_batch = db.batch()
+                    asset_batch_count = 0
+
+                if history_batch_count >= 400:
+                    history_batch.commit()
+                    history_batch = db.batch()
+                    history_batch_count = 0
             else:
                 failed.append(ticker)
-        except Exception:
+        except Exception as e:
             failed.append(ticker)
 
-    if batch_count > 0:
-        batch.commit()
+    if asset_batch_count > 0:
+        asset_batch.commit()
+    if history_batch_count > 0:
+        history_batch.commit()
 
     return {
         "message": f"Updated {updated} prices, {len(failed)} failed.",

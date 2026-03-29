@@ -33,6 +33,9 @@ export interface Asset {
     primary_theme: string;
     secondary_theme: string;
     last_updated?: string | null;
+    previous_close?: number | null;
+    daily_change?: number | null;
+    daily_change_pct?: number | null;
 }
 
 export interface ThemeLists {

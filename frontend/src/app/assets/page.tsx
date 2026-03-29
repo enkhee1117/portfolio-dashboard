@@ -320,6 +320,9 @@ export default function AssetsPage() {
                   <th className="px-4 py-3 text-right cursor-pointer hover:text-white text-xs" onClick={() => handleSort("price")}>
                     Price <SortIcon colKey="price" />
                   </th>
+                  <th className="px-4 py-3 text-right cursor-pointer hover:text-white text-xs" onClick={() => handleSort("daily_change_pct")}>
+                    Daily Chg <SortIcon colKey="daily_change_pct" />
+                  </th>
                   <th className="px-4 py-3 text-right text-xs">Actions</th>
                 </tr>
               </thead>
@@ -346,6 +349,18 @@ export default function AssetsPage() {
                     <td className="px-4 py-2.5 text-right text-gray-300">
                       ${asset.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {asset.daily_change_pct != null ? (
+                        <span className={`font-medium ${asset.daily_change_pct >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {asset.daily_change_pct >= 0 ? "+" : ""}{asset.daily_change_pct.toFixed(2)}%
+                          <span className="text-xs ml-1 text-gray-500">
+                            ({asset.daily_change_pct >= 0 ? "+" : ""}${asset.daily_change?.toFixed(2)})
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-gray-600 text-xs">--</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-right space-x-2">
                       <button onClick={() => openEdit(asset)} className="text-blue-400 hover:text-blue-300 text-xs">
                         Edit
@@ -358,7 +373,7 @@ export default function AssetsPage() {
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500 italic">
+                    <td colSpan={6} className="px-6 py-8 text-center text-gray-500 italic">
                       No assets found.
                     </td>
                   </tr>
