@@ -123,6 +123,30 @@ export default function SettingsPage() {
     } else toast.error("Failed to combine themes.");
   };
 
+  // Backfill
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<string | null>(null);
+
+  const handleBackfill = async () => {
+    if (!confirm("This will fetch historical prices for all traded tickers. It may take a minute. Continue?")) return;
+    setBackfilling(true);
+    setBackfillResult(null);
+    try {
+      const res = await fetch("/api/portfolio/backfill-history", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setBackfillResult(data.message);
+        toast.success("Historical prices backfilled!");
+      } else {
+        toast.error("Backfill failed.");
+      }
+    } catch {
+      toast.error("Error running backfill.");
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
   const handleRefreshPrices = async () => {
     setRefreshing(true);
     setRefreshResult(null);
@@ -309,6 +333,36 @@ export default function SettingsPage() {
               </p>
             </div>
           )}
+        </div>
+
+        {/* Backfill Historical Prices */}
+        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Backfill Historical Prices</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                One-time operation to fetch historical closing prices for all traded tickers.
+                Required for the portfolio value chart on the Dashboard.
+              </p>
+              {backfillResult && (
+                <p className="text-xs text-green-400 mt-2">{backfillResult}</p>
+              )}
+            </div>
+            <button
+              onClick={handleBackfill}
+              disabled={backfilling}
+              className="shrink-0 ml-6 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {backfilling ? (
+                <span className="flex items-center gap-2">
+                  <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                  Backfilling...
+                </span>
+              ) : (
+                "Backfill Prices"
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Theme Management */}

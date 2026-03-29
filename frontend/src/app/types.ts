@@ -42,3 +42,8 @@ export interface ThemeLists {
     primary: string[];
     secondary: string[];
 }
+
+export interface PortfolioHistoryPoint {
+    date: string;
+    value: number;
+}

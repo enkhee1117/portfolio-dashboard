@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import PositionTable from '../components/PositionTable';
 import ManualTradeForm from '../components/ManualTradeForm';
 import ThemeAnalysis from '../components/ThemeAnalysis';
+import PortfolioChart from '../components/PortfolioChart';
 import { PortfolioSnapshot, ThemeLists } from './types';
 import { useToast } from '../components/Toast';
 import { useCmdK } from '../components/useKeyboard';
@@ -272,6 +273,9 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        {/* Portfolio History Chart */}
+        <PortfolioChart />
 
         {/* Manual Trade Form */}
         {showManualTrade && (

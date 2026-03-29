@@ -596,6 +596,213 @@ def refresh_status(db=Depends(get_db)):
     }
 
 
+# ── Portfolio History ─────────────────────────────────────────────────
+
+@app.post("/portfolio/backfill-history")
+def backfill_history(db=Depends(get_db)):
+    """Backfill price_history collection with historical prices for all traded tickers."""
+    import yfinance as yf
+    import pandas as pd
+    import math
+
+    # Get all unique tickers and earliest trade date
+    trades_docs = db.collection('trades').stream()
+    tickers = set()
+    earliest = None
+    for doc in trades_docs:
+        d = doc.to_dict()
+        tickers.add(d.get('ticker'))
+        dt = d.get('date')
+        if hasattr(dt, 'replace'):
+            dt = dt.replace(tzinfo=None)
+        if dt and (earliest is None or dt < earliest):
+            earliest = dt
+
+    if not tickers or not earliest:
+        return {"message": "No trades found.", "written": 0}
+
+    tickers = sorted(tickers)
+    start_str = earliest.strftime('%Y-%m-%d')
+    logger.info(f"Backfilling prices for {len(tickers)} tickers from {start_str}")
+
+    try:
+        data = yf.download(tickers, start=start_str, progress=False)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Yahoo Finance error: {e}")
+
+    if data.empty:
+        return {"message": "No price data returned.", "written": 0}
+
+    is_multi = isinstance(data.columns, pd.MultiIndex)
+    batch = db.batch()
+    batch_count = 0
+    written = 0
+    failed_tickers = []
+
+    for ticker in tickers:
+        try:
+            if is_multi:
+                close_series = data['Close'][ticker].dropna()
+            else:
+                close_series = data['Close'].dropna()
+
+            for date_idx, close_val in close_series.items():
+                close_price = float(close_val)
+                if math.isnan(close_price) or close_price <= 0:
+                    continue
+                date_str = date_idx.strftime('%Y-%m-%d')
+                doc_id = f"{ticker}_{date_str}"
+                doc_ref = db.collection('price_history').document(doc_id)
+                batch.set(doc_ref, {
+                    "ticker": ticker,
+                    "date": date_str,
+                    "close": round(close_price, 2),
+                }, merge=True)
+                batch_count += 1
+                written += 1
+
+                if batch_count >= 400:
+                    batch.commit()
+                    batch = db.batch()
+                    batch_count = 0
+        except Exception:
+            failed_tickers.append(ticker)
+
+    if batch_count > 0:
+        batch.commit()
+
+    return {
+        "message": f"Backfilled {written} price records for {len(tickers)} tickers from {start_str}.",
+        "written": written,
+        "tickers": len(tickers),
+        "failed": failed_tickers,
+    }
+
+
+@app.get("/portfolio/history")
+def portfolio_history(period: str = "1y", db=Depends(get_db)):
+    """Compute historical portfolio value by replaying trades against price_history."""
+    from collections import defaultdict
+    from datetime import timedelta
+    import math
+
+    # Determine date range from period
+    now = datetime.utcnow()
+    period_map = {
+        "1m": timedelta(days=30),
+        "3m": timedelta(days=90),
+        "6m": timedelta(days=180),
+        "1y": timedelta(days=365),
+        "all": timedelta(days=365 * 10),
+    }
+    delta = period_map.get(period, timedelta(days=365))
+    start_date = now - delta
+
+    # Load all trades sorted by date
+    trades_docs = db.collection('trades').stream()
+    trades = []
+    for doc in trades_docs:
+        d = doc.to_dict()
+        dt = d.get('date')
+        if hasattr(dt, 'replace'):
+            dt = dt.replace(tzinfo=None)
+        d['date'] = dt
+        d['id'] = doc.id
+        trades.append(d)
+    trades.sort(key=lambda t: t['date'])
+
+    if not trades:
+        return []
+
+    # Load price_history into a dict: {ticker: {date_str: close_price}}
+    price_docs = db.collection('price_history').stream()
+    prices: dict[str, dict[str, float]] = defaultdict(dict)
+    for doc in price_docs:
+        d = doc.to_dict()
+        ticker = d.get('ticker')
+        date_str = d.get('date')
+        close = d.get('close', 0)
+        if ticker and date_str and close:
+            prices[ticker][date_str] = close
+
+    # Build positions at each sample date
+    # Sample weekly within the period, plus every trade date
+    sample_dates = set()
+
+    # Add weekly samples
+    d = max(start_date, trades[0]['date'])
+    while d <= now:
+        sample_dates.add(d.strftime('%Y-%m-%d'))
+        d += timedelta(days=7)
+    sample_dates.add(now.strftime('%Y-%m-%d'))
+
+    # Add trade dates within period
+    for t in trades:
+        if t['date'] >= start_date:
+            sample_dates.add(t['date'].strftime('%Y-%m-%d'))
+
+    sample_dates = sorted(sample_dates)
+
+    # Replay trades and compute portfolio value at each sample date
+    positions: dict[str, dict] = defaultdict(lambda: {"quantity": 0.0, "cost_basis": 0.0})
+    trade_idx = 0
+    result = []
+
+    for date_str in sample_dates:
+        # Process all trades up to this date
+        while trade_idx < len(trades) and trades[trade_idx]['date'].strftime('%Y-%m-%d') <= date_str:
+            t = trades[trade_idx]
+            ticker = t.get('ticker')
+            if t.get('type') == 'Equity':
+                qty = t.get('quantity', 0)
+                price = t.get('price', 0)
+                if t.get('side') == 'Buy':
+                    cur_qty = positions[ticker]["quantity"]
+                    cur_cost = positions[ticker]["cost_basis"]
+                    new_qty = cur_qty + qty
+                    if new_qty > 0:
+                        positions[ticker]["cost_basis"] = ((cur_qty * cur_cost) + (qty * price)) / new_qty
+                    positions[ticker]["quantity"] = new_qty
+                elif t.get('side') == 'Sell':
+                    positions[ticker]["quantity"] -= qty
+                    if abs(positions[ticker]["quantity"]) < 0.0001:
+                        positions[ticker]["quantity"] = 0.0
+                        positions[ticker]["cost_basis"] = 0.0
+            trade_idx += 1
+
+        # Compute portfolio value at this date
+        total_value = 0.0
+        for ticker, pos in positions.items():
+            if abs(pos["quantity"]) < 0.0001:
+                continue
+            # Find closest price on or before this date
+            close = _find_price(prices, ticker, date_str)
+            if close:
+                total_value += pos["quantity"] * close
+
+        result.append({
+            "date": date_str,
+            "value": round(total_value, 2),
+        })
+
+    return result
+
+
+def _find_price(prices: dict, ticker: str, date_str: str) -> float | None:
+    """Find the closing price for a ticker on or before a given date."""
+    ticker_prices = prices.get(ticker, {})
+    if date_str in ticker_prices:
+        return ticker_prices[date_str]
+    # Look back up to 5 days for weekends/holidays
+    from datetime import datetime, timedelta
+    dt = datetime.strptime(date_str, '%Y-%m-%d')
+    for i in range(1, 6):
+        prev = (dt - timedelta(days=i)).strftime('%Y-%m-%d')
+        if prev in ticker_prices:
+            return ticker_prices[prev]
+    return None
+
+
 # ── CSV Export (Trades) ───────────────────────────────────────────────
 
 @app.get("/trades/export-csv")
