@@ -9,6 +9,8 @@ export default function TradeHistory() {
     const [loading, setLoading] = useState(true);
     const toast = useToast();
     const [filterText, setFilterText] = useState("");
+    const [dateFrom, setDateFrom] = useState("");
+    const [dateTo, setDateTo] = useState("");
 
     // Sorting state
     const [sortKey, setSortKey] = useState<keyof Trade | null>('date');
@@ -37,10 +39,14 @@ export default function TradeHistory() {
     };
 
     const sortedAndFilteredTrades = useMemo(() => {
-        let data = trades.filter(t =>
-            t.ticker.toLowerCase().includes(filterText.toLowerCase()) ||
-            t.type.toLowerCase().includes(filterText.toLowerCase())
-        );
+        const q = filterText.toLowerCase();
+        let data = trades.filter(t => {
+            const matchesText = !q || t.ticker.toLowerCase().includes(q) || t.type.toLowerCase().includes(q);
+            const tradeDate = t.date.slice(0, 10); // YYYY-MM-DD
+            const matchesFrom = !dateFrom || tradeDate >= dateFrom;
+            const matchesTo = !dateTo || tradeDate <= dateTo;
+            return matchesText && matchesFrom && matchesTo;
+        });
 
         if (sortKey) {
             data.sort((a, b) => {
@@ -53,7 +59,7 @@ export default function TradeHistory() {
             });
         }
         return data;
-    }, [trades, filterText, sortKey, sortOrder]);
+    }, [trades, filterText, dateFrom, dateTo, sortKey, sortOrder]);
 
     const SortIcon = ({ colKey }: { colKey: keyof Trade }) => {
         if (sortKey !== colKey) return <span className="text-gray-600 ml-1">⇅</span>;
@@ -123,13 +129,42 @@ export default function TradeHistory() {
                 </div>
 
                 {/* Filters */}
+                <div className="flex items-center gap-3 flex-wrap">
                 <input
                     type="text"
                     placeholder="Filter by Ticker or Type..."
                     value={filterText}
                     onChange={(e) => setFilterText(e.target.value)}
-                    className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-blue-500 w-full md:w-64"
+                    className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 w-full md:w-64 text-sm"
                 />
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <span>From</span>
+                    <input
+                        type="date"
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                        className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 text-sm [&::-webkit-calendar-picker-indicator]:invert"
+                    />
+                    <span>To</span>
+                    <input
+                        type="date"
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                        className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 text-sm [&::-webkit-calendar-picker-indicator]:invert"
+                    />
+                    {(dateFrom || dateTo) && (
+                        <button
+                            onClick={() => { setDateFrom(""); setDateTo(""); }}
+                            className="text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700"
+                        >
+                            Clear dates
+                        </button>
+                    )}
+                </div>
+                <span className="text-xs text-gray-500 ml-auto">
+                    {sortedAndFilteredTrades.length} of {trades.length} trades
+                </span>
+                </div>
 
                 {/* Table */}
                 <div className="overflow-x-auto rounded-xl border border-gray-700 bg-gray-800 shadow-xl">
@@ -161,7 +196,10 @@ export default function TradeHistory() {
                                     </td>
                                     <td className="px-6 py-4 text-center">
                                         {trade.is_wash_sale && (
-                                            <span className="px-2 py-1 text-xs font-bold text-red-100 bg-red-600 rounded-full">
+                                            <span
+                                                className="px-2 py-1 text-xs font-bold text-red-100 bg-red-600 rounded-full cursor-help"
+                                                title="IRS Wash Sale: You sold at a loss and repurchased within 30 days. The loss is disallowed for tax purposes and added to the cost basis of the replacement shares."
+                                            >
                                                 WASH SALE
                                             </span>
                                         )}

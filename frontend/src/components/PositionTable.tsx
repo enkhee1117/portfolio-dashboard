@@ -203,25 +203,33 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                   <td className="px-3 py-2.5 font-medium text-white">
                     {pos.ticker}
                     {isNegative && (
-                      <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold bg-red-600 text-red-100 rounded">
+                      <span
+                        className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold bg-red-600 text-red-100 rounded cursor-help"
+                        title="Negative quantity — this may be a data entry error or a short position. Check your trade history."
+                      >
                         SHORT?
                       </span>
                     )}
                   </td>
                   <td className="px-3 py-2.5">
                     {pos.primary_theme ? (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setFilterText(pos.primary_theme || ""); }}
+                        className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-900/60 transition-colors"
+                      >
                         {pos.primary_theme}
-                      </span>
+                      </button>
                     ) : (
                       <span className="text-gray-600 text-xs italic">--</span>
                     )}
                   </td>
                   <td className="px-3 py-2.5">
                     {pos.secondary_theme ? (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300 border border-cyan-700/50">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setFilterText(pos.secondary_theme || ""); }}
+                        className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300 border border-cyan-700/50 hover:bg-cyan-900/60 transition-colors">
                         {pos.secondary_theme}
-                      </span>
+                      </button>
                     ) : (
                       <span className="text-gray-600 text-xs italic">--</span>
                     )}
@@ -381,7 +389,10 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                         </td>
                         <td className="px-3 py-2 text-center">
                           {t.is_wash_sale && (
-                            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-red-600 text-red-100 rounded">
+                            <span
+                              className="px-1.5 py-0.5 text-[10px] font-bold bg-red-600 text-red-100 rounded cursor-help"
+                              title="IRS Wash Sale: You sold at a loss and repurchased within 30 days. The loss is disallowed for tax purposes and added to the cost basis of the replacement shares."
+                            >
                               WASH
                             </span>
                           )}
