@@ -57,9 +57,13 @@ export default function Home() {
   const totalPnL = totalUnrealized + totalRealized;
   const totalPnLYtd = totalUnrealized + totalRealizedYtd;
 
+  // Cost basis = total capital deployed in current holdings
+  const totalCostBasis = positions.reduce((acc, pos) => acc + (pos.quantity > 0 ? pos.average_price * pos.quantity : 0), 0);
+
   // Display values based on toggle
   const displayRealized = pnlView === 'ytd' ? totalRealizedYtd : totalRealized;
   const displayTotalPnl = pnlView === 'ytd' ? totalPnLYtd : totalPnL;
+  const displayPnlPct = totalCostBasis > 0 ? (displayTotalPnl / totalCostBasis) * 100 : 0;
 
   const activePositions = useMemo(() => positions.filter(p => p.quantity > 0), [positions]);
   const unassignedPositions = useMemo(
@@ -182,6 +186,9 @@ export default function Home() {
             </h3>
             <p className={`mt-2 text-2xl font-bold ${displayTotalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               ${displayTotalPnl.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            </p>
+            <p className={`text-xs mt-1 ${displayPnlPct >= 0 ? 'text-green-400/70' : 'text-red-400/70'}`}>
+              {displayPnlPct >= 0 ? '+' : ''}{displayPnlPct.toFixed(1)}% on cost
             </p>
           </div>
           <div onClick={() => copyValue(totalUnrealized)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
