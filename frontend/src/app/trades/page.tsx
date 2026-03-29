@@ -238,21 +238,25 @@ export default function TradeHistory() {
                         <form onSubmit={handleUpdate} className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Date</label>
+                                    <label className="block text-sm text-gray-400 mb-1">Date (YYYY-MM-DD)</label>
                                     <input
-                                        type="date"
+                                        type="text"
+                                        placeholder="2025-01-15"
                                         value={editingTrade.date ? new Date(editingTrade.date).toISOString().slice(0, 10) : ''}
                                         onChange={e => {
-                                            // Store as ISO string (with default time) to be consistent with API/Type
-                                            // e.target.value is YYYY-MM-DD
-                                            if (e.target.value) {
-                                                const dateObj = new Date(e.target.value);
-                                                // Set to noon to avoid timezone issues shifting the day
-                                                dateObj.setHours(12, 0, 0, 0);
-                                                setEditingTrade({ ...editingTrade, date: dateObj.toISOString() });
+                                            const val = e.target.value;
+                                            // Allow typing — validate on blur/submit
+                                            if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+                                                const dateObj = new Date(val + 'T12:00:00');
+                                                if (!isNaN(dateObj.getTime())) {
+                                                    setEditingTrade({ ...editingTrade, date: dateObj.toISOString() });
+                                                    return;
+                                                }
                                             }
+                                            // Store raw for intermediate typing
+                                            setEditingTrade({ ...editingTrade, date: val });
                                         }}
-                                        className="w-full bg-gray-700 text-white rounded p-2 [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:w-6 [&::-webkit-calendar-picker-indicator]:h-6"
+                                        className="w-full bg-gray-700 text-white rounded p-2 font-mono"
                                     />
                                 </div>
                                 <div>
