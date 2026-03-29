@@ -49,13 +49,16 @@ def fetch_and_store_ticker_prices(db, ticker: str, start: str = "2020-01-01"):
         return 0
 
 
-def get_tickers_with_price_data(db) -> set[str]:
-    """Return set of tickers that already have price_series data."""
-    existing = set()
+def get_tickers_last_price_date(db) -> dict[str, str]:
+    """Return dict of ticker -> last date in price_series (YYYY-MM-DD)."""
+    result = {}
     docs = db.collection('price_series').stream()
     for doc in docs:
-        existing.add(doc.id)
-    return existing
+        d = doc.to_dict()
+        prices = d.get('prices', {})
+        if prices:
+            result[doc.id] = max(prices.keys())
+    return result
 
 
 # ── Scheduled Price Refresh ───────────────────────────────────────────
@@ -721,40 +724,68 @@ def backfill_history(db=Depends(get_db)):
     if not tickers or not earliest:
         return {"message": "No trades found.", "written": 0}
 
-    # Skip tickers that already have price data
-    existing_tickers = get_tickers_with_price_data(db)
-    new_tickers = sorted(tickers - existing_tickers)
+    # Smart gap detection: check each ticker's last price date
     all_tickers = sorted(tickers)
-
+    last_dates = get_tickers_last_price_date(db)
+    today_str = datetime.utcnow().strftime('%Y-%m-%d')
     start_str = earliest.strftime('%Y-%m-%d')
 
-    if not new_tickers:
-        logger.info(f"All {len(all_tickers)} tickers already have price data. Skipping download.")
-    else:
-        logger.info(f"Backfilling {len(new_tickers)} new tickers (skipping {len(existing_tickers)} with existing data) from {start_str}")
+    # Separate into: new (no data), stale (has data but not up to date), fresh (up to date)
+    new_tickers = []
+    stale_tickers = {}  # ticker -> start_date (day after last known)
+    fresh_count = 0
 
-    tickers = new_tickers  # Only download for new tickers
+    for ticker in all_tickers:
+        if ticker not in last_dates:
+            new_tickers.append(ticker)
+        else:
+            last = last_dates[ticker]
+            if last < today_str:
+                # Need data from the day after last known date
+                from datetime import timedelta
+                next_day = (datetime.strptime(last, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+                stale_tickers[ticker] = next_day
+            else:
+                fresh_count += 1
+
+    tickers_to_download = new_tickers + list(stale_tickers.keys())
+
+    logger.info(
+        f"Backfill: {len(new_tickers)} new, {len(stale_tickers)} stale, "
+        f"{fresh_count} fresh (skipped). Downloading {len(tickers_to_download)} tickers."
+    )
 
     written = 0
     failed_tickers = []
 
-    if tickers:
+    if tickers_to_download:
+        # For new tickers: download from earliest trade date
+        # For stale tickers: download from their last known date (saves bandwidth)
+        # Use earliest date as start for the batch (yfinance filters per-ticker internally)
+        download_start = start_str
+        if not new_tickers and stale_tickers:
+            # All stale — start from the earliest stale date
+            download_start = min(stale_tickers.values())
+
         try:
-            data = yf.download(tickers, start=start_str, progress=False)
+            data = yf.download(tickers_to_download, start=download_start, progress=False)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Yahoo Finance error: {e}")
 
         if data.empty:
-            logger.warning("Yahoo Finance returned no data for new tickers")
+            logger.warning("Yahoo Finance returned no data")
         else:
             is_multi = isinstance(data.columns, pd.MultiIndex)
 
-            for ticker in tickers:
+            for ticker in tickers_to_download:
                 try:
                     if is_multi:
                         close_series = data['Close'][ticker].dropna()
                     else:
                         close_series = data['Close'].dropna()
+
+                    # For stale tickers, only keep dates after their last known date
+                    min_date = stale_tickers.get(ticker, start_str)
 
                     prices_map = {}
                     for date_idx, close_val in close_series.items():
@@ -762,8 +793,9 @@ def backfill_history(db=Depends(get_db)):
                         if math.isnan(close_price) or close_price <= 0:
                             continue
                         date_str = date_idx.strftime('%Y-%m-%d')
-                        prices_map[date_str] = round(close_price, 2)
-                        written += 1
+                        if date_str >= min_date:
+                            prices_map[date_str] = round(close_price, 2)
+                            written += 1
 
                     if prices_map:
                         db.collection('price_series').document(ticker).set({
@@ -880,7 +912,7 @@ def backfill_history(db=Depends(get_db)):
     logger.info(f"Backfilled {snapshots_written} portfolio snapshots")
 
     return {
-        "message": f"Backfilled {written} price records for {len(new_tickers)} new tickers ({len(existing_tickers)} skipped). {snapshots_written} portfolio snapshots stored.",
+        "message": f"Backfilled {written} price records ({len(new_tickers)} new, {len(stale_tickers)} updated, {fresh_count} already fresh). {snapshots_written} snapshots stored.",
         "written": written,
         "snapshots": snapshots_written,
         "tickers": len(tickers),
