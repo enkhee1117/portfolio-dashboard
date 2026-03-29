@@ -1,6 +1,7 @@
 "use client";
 import { PortfolioSnapshot, Trade } from "../app/types";
 import { useState, useMemo, useEffect } from "react";
+import { useEscape } from "./useKeyboard";
 
 interface PositionTableProps {
   positions: PortfolioSnapshot[];
@@ -16,6 +17,8 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [tickerTrades, setTickerTrades] = useState<Trade[]>([]);
   const [loadingTrades, setLoadingTrades] = useState(false);
+
+  useEscape(selectedTicker ? () => setSelectedTicker(null) : null);
 
   const handleSort = (key: keyof PortfolioSnapshot) => {
     if (sortKey === key) {

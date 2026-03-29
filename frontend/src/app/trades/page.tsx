@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Trade } from '../types';
 import { useToast } from '../../components/Toast';
+import { useEscape, useCmdK } from '../../components/useKeyboard';
 
 export default function TradeHistory() {
     const [trades, setTrades] = useState<Trade[]>([]);
@@ -67,6 +68,9 @@ export default function TradeHistory() {
     };
 
     const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
+
+    useEscape(editingTrade ? () => setEditingTrade(null) : null);
+    useCmdK();
 
     // Handlers
     const handleDelete = async (id: string) => {

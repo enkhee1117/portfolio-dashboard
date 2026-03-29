@@ -6,6 +6,7 @@ import ManualTradeForm from '../components/ManualTradeForm';
 import ThemeAnalysis from '../components/ThemeAnalysis';
 import { PortfolioSnapshot, ThemeLists } from './types';
 import { useToast } from '../components/Toast';
+import { useCmdK } from '../components/useKeyboard';
 
 export default function Home() {
   const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
@@ -13,6 +14,12 @@ export default function Home() {
   const [showManualTrade, setShowManualTrade] = useState(false);
 
   const toast = useToast();
+  useCmdK();
+
+  const copyValue = (val: number) => {
+    navigator.clipboard.writeText(val.toFixed(2));
+    toast.info("Copied to clipboard");
+  };
 
   // Missing themes panel
   const [showMissing, setShowMissing] = useState(false);
@@ -132,28 +139,28 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Summary Cards */}
+        {/* Summary Cards — click to copy value */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest">Net Liquidity</h3>
+          <div onClick={() => copyValue(totalMarketValue)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">Net Liquidity</h3>
             <p className="mt-2 text-2xl font-bold text-white">
               ${totalMarketValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
-          <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest">Total P&L</h3>
+          <div onClick={() => copyValue(totalPnL)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">Total P&L</h3>
             <p className={`mt-2 text-2xl font-bold ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               ${totalPnL.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
-          <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest">Unrealized</h3>
+          <div onClick={() => copyValue(totalUnrealized)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">Unrealized</h3>
             <p className={`mt-2 text-2xl font-bold ${totalUnrealized >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               ${totalUnrealized.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>
           </div>
-          <div className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700">
-            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest">Realized</h3>
+          <div onClick={() => copyValue(totalRealized)} className="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors group" title="Click to copy">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest group-hover:text-gray-300">Realized</h3>
             <p className={`mt-2 text-2xl font-bold ${totalRealized >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               ${totalRealized.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </p>

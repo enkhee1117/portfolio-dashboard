@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Asset, ThemeLists } from "../types";
 import { useToast } from "../../components/Toast";
+import { useEscape, useCmdK } from "../../components/useKeyboard";
 
 export default function AssetsPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -24,6 +25,9 @@ export default function AssetsPage() {
   // Edit modal
   const toast = useToast();
   const [editing, setEditing] = useState<Asset | null>(null);
+
+  useEscape(editing ? () => setEditing(null) : null);
+  useCmdK();
   const [editForm, setEditForm] = useState({ ticker: "", primary_theme: "", secondary_theme: "", price: "" });
 
   const fetchAssets = async () => {

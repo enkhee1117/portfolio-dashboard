@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { PortfolioSnapshot } from "../app/types";
+import { useEscape } from "./useKeyboard";
 import {
   BarChart,
   Bar,
@@ -77,6 +78,13 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
 
   const selectedTotal = selectedStocks.reduce((s, p) => s + p.market_value, 0);
 
+  const closeModal = () => {
+    setSelectedTheme(null);
+    setSelectedType(null);
+  };
+
+  useEscape(selectedTheme ? closeModal : null);
+
   if (primaryData.length === 0) return null;
 
   const handleBarClick = (type: "primary" | "secondary", name: string) => {
@@ -87,11 +95,6 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
       setSelectedTheme(name);
       setSelectedType(type);
     }
-  };
-
-  const closeModal = () => {
-    setSelectedTheme(null);
-    setSelectedType(null);
   };
 
   const renderChart = (
