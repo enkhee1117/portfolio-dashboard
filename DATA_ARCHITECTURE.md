@@ -53,9 +53,21 @@ Every operation must produce the same result whether run once or ten times, with
 
 | State | Definition | Action |
 |-------|-----------|--------|
-| **Fresh** | Data includes the most recent trading day's close (or was computed after the latest price refresh) | Skip — no work needed |
-| **Stale** | Data exists but is missing recent days (e.g., last entry is 2 days ago) | Gap-fill — fetch only missing days |
+| **Fresh** | Data includes the most recent **trading day's** close (not calendar day — weekends and holidays don't count) | Skip — no work needed |
+| **Stale** | Data exists but is missing recent trading days (e.g., last entry is 2 trading days ago) | Gap-fill — fetch only missing days |
 | **Empty** | No data at all for this entity | Full fetch — download complete history |
+
+**Critical: "today" ≠ "last trading day."** Markets close on weekends and holidays (Good Friday, MLK Day, etc.). Freshness must compare against the **last actual trading day**, not the calendar date. Use `get_last_trading_day()` which checks SPY's last available price to determine this dynamically.
+
+```python
+# BAD: Compares against calendar date
+today = datetime.utcnow().strftime('%Y-%m-%d')  # "2026-04-03" (Good Friday)
+if last_price_date < today: fetch()  # Keeps trying to fetch non-existent Friday data!
+
+# GOOD: Compares against last trading day
+last_trading = get_last_trading_day()  # "2026-04-02" (Thursday)
+if last_price_date < last_trading: fetch()  # Correctly identifies data is fresh
+```
 
 This applies everywhere:
 
@@ -456,3 +468,4 @@ Before building any feature that touches data:
 - [ ] **Natural keys?** Use meaningful IDs (ticker, date) not auto-generated ones for reference data
 - [ ] **Source vs derived?** Never modify source data as a side effect. Derived data can always be regenerated
 - [ ] **Gap-aware?** Can the operation handle partial data? Does it fetch only what's missing, not everything or nothing?
+- [ ] **Market-calendar-aware?** Does the code compare against last trading day, not calendar date? Does it skip weekends and holidays?

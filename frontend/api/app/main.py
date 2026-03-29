@@ -61,6 +61,29 @@ def get_tickers_last_price_date(db) -> dict[str, str]:
     return result
 
 
+def get_last_trading_day() -> str:
+    """
+    Return the last US market trading day as YYYY-MM-DD.
+    Uses a well-known liquid ticker (SPY) as reference.
+    Falls back to yesterday if the API call fails.
+    """
+    import yfinance as yf
+    try:
+        data = yf.download("SPY", period="5d", progress=False)
+        if not data.empty:
+            return data.index[-1].strftime('%Y-%m-%d')
+    except Exception:
+        pass
+    # Fallback: walk back from today skipping weekends
+    from datetime import timedelta
+    d = datetime.utcnow()
+    for _ in range(5):
+        d -= timedelta(days=1)
+        if d.weekday() < 5:  # Mon-Fri
+            return d.strftime('%Y-%m-%d')
+    return (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+
 # ── Scheduled Price Refresh ───────────────────────────────────────────
 
 def _run_price_refresh():
@@ -199,10 +222,19 @@ def _run_price_refresh():
 
 
 def _scheduled_refresh():
-    """Wrapper for the scheduler — logs and catches all errors."""
+    """Wrapper for the scheduler — skips weekends/holidays, logs errors."""
+    # Skip if today is not a trading day (weekends, holidays)
+    today = datetime.utcnow()
+    if today.weekday() >= 5:  # Saturday=5, Sunday=6
+        logger.info(f"Skipping scheduled refresh — weekend ({today.strftime('%A')})")
+        return
+
     logger.info("Scheduled price refresh starting...")
     try:
         result = _run_price_refresh()
+        if result['updated'] == 0 and len(result['failed']) == len(result.get('failed', [])):
+            logger.info("No price updates — market may be closed (holiday)")
+            return
         logger.info(f"Scheduled refresh result: {result['updated']} updated, {len(result['failed'])} failed")
         # Recompute today's portfolio snapshot with updated prices
         db = get_db()
@@ -211,7 +243,7 @@ def _scheduled_refresh():
         logger.error(f"Scheduled refresh error: {e}")
 
 
-# APScheduler — runs daily at 5:30 PM US/Eastern (after market close)
+# APScheduler — runs weekdays at 5:30 PM US/Eastern (after market close)
 scheduler = None
 
 @asynccontextmanager
@@ -222,7 +254,11 @@ async def lifespan(app):
     scheduler = BackgroundScheduler()
     scheduler.add_job(
         _scheduled_refresh,
-        CronTrigger(hour=17, minute=30, timezone="US/Eastern"),
+        CronTrigger(
+            hour=17, minute=30,
+            day_of_week="mon-fri",  # Skip weekends
+            timezone="US/Eastern",
+        ),
         id="daily_price_refresh",
         replace_existing=True,
     )
@@ -695,7 +731,7 @@ def refresh_status(db=Depends(get_db)):
     return {
         "last_refresh": (latest.isoformat() + "Z") if latest else None,
         "next_scheduled": next_run,
-        "schedule": "Daily at 5:30 PM ET (after market close)",
+        "schedule": "Weekdays at 5:30 PM ET (after market close)",
     }
 
 
@@ -724,13 +760,15 @@ def backfill_history(db=Depends(get_db)):
     if not tickers or not earliest:
         return {"message": "No trades found.", "written": 0}
 
-    # Smart gap detection: check each ticker's last price date
+    # Smart gap detection: compare against last trading day, not calendar date
     all_tickers = sorted(tickers)
     last_dates = get_tickers_last_price_date(db)
-    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+    last_trading = get_last_trading_day()
     start_str = earliest.strftime('%Y-%m-%d')
 
-    # Separate into: new (no data), stale (has data but not up to date), fresh (up to date)
+    logger.info(f"Last trading day: {last_trading}")
+
+    # Separate into: new (no data), stale (has data but not current), fresh (up to date)
     new_tickers = []
     stale_tickers = {}  # ticker -> start_date (day after last known)
     fresh_count = 0
@@ -740,7 +778,7 @@ def backfill_history(db=Depends(get_db)):
             new_tickers.append(ticker)
         else:
             last = last_dates[ticker]
-            if last < today_str:
+            if last < last_trading:
                 # Need data from the day after last known date
                 from datetime import timedelta
                 next_day = (datetime.strptime(last, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
