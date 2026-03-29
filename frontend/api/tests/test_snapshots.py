@@ -161,6 +161,7 @@ class TestGetCachedPortfolio:
             {"ticker": "AAPL", "quantity": 10, "average_price": 100.0,
              "current_price": 150.0, "market_value": 1500.0,
              "unrealized_pnl": 500.0, "realized_pnl": 0.0,
+             "realized_pnl_ytd": 0.0,
              "primary_theme": "AI", "secondary_theme": "Technology"}
         ]
         snapshot = make_snapshot_doc(

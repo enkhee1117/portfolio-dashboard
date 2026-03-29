@@ -141,15 +141,22 @@ def get_cached_portfolio(db):
     """
     today = datetime.utcnow().strftime('%Y-%m-%d')
 
+    # Required fields that must exist in cached positions (add new fields here)
+    REQUIRED_FIELDS = {"ticker", "quantity", "realized_pnl", "realized_pnl_ytd"}
+
     try:
         doc = db.collection('portfolio_snapshots').document(today).get()
         if doc.exists:
             d = doc.to_dict()
             positions = d.get('positions', [])
-            if positions:  # Only use cache if positions were stored
-                for p in positions:
-                    p['date'] = datetime.utcnow().replace(tzinfo=None)
-                return positions
+            if positions:
+                # Validate cache has all required fields (recompute if schema changed)
+                if REQUIRED_FIELDS.issubset(positions[0].keys()):
+                    for p in positions:
+                        p['date'] = datetime.utcnow().replace(tzinfo=None)
+                    return positions
+                else:
+                    logger.info("Cached snapshot missing required fields — recomputing")
     except Exception:
         pass
 
