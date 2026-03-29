@@ -4,12 +4,13 @@ import { useEffect, useState, useMemo } from 'react';
 import ManualTradeForm from '../components/ManualTradeForm';
 import ThemeAnalysis from '../components/ThemeAnalysis';
 import PortfolioChart from '../components/PortfolioChart';
-import { PortfolioSnapshot, ThemeLists } from './types';
+import { PortfolioSnapshot, ThemeLists, Asset } from './types';
 import { useToast } from '../components/Toast';
 import { useCmdK, useEscape } from '../components/useKeyboard';
 
 export default function Home() {
   const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [showManualTrade, setShowManualTrade] = useState(false);
   const [pnlView, setPnlView] = useState<'ytd' | 'all'>('ytd');
@@ -48,6 +49,7 @@ export default function Home() {
 
   useEffect(() => {
     fetchPortfolio();
+    fetch("/api/assets").then(r => r.json()).then(setAssets).catch(console.error);
   }, []);
 
   const totalMarketValue = positions.reduce((acc, pos) => acc + pos.market_value, 0);
@@ -396,6 +398,57 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* Daily Movers */}
+        {assets.filter(a => a.daily_change_pct != null).length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Biggest Daily Gainers */}
+            <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+              <h3 className="text-sm font-semibold text-green-400 uppercase tracking-widest mb-3">Daily Gainers</h3>
+              <div className="space-y-2">
+                {assets
+                  .filter(a => a.daily_change_pct != null && a.daily_change_pct! > 0)
+                  .sort((a, b) => (b.daily_change_pct || 0) - (a.daily_change_pct || 0))
+                  .slice(0, 5)
+                  .map(a => (
+                    <div key={a.ticker} className="flex items-center justify-between py-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-medium text-sm">{a.ticker}</span>
+                        <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
+                      </div>
+                      <span className="text-green-400 text-sm font-medium">+{a.daily_change_pct!.toFixed(2)}%</span>
+                    </div>
+                  ))}
+                {assets.filter(a => a.daily_change_pct != null && a.daily_change_pct! > 0).length === 0 && (
+                  <p className="text-gray-500 text-xs italic">No gainers today</p>
+                )}
+              </div>
+            </div>
+
+            {/* Biggest Daily Losers */}
+            <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+              <h3 className="text-sm font-semibold text-red-400 uppercase tracking-widest mb-3">Daily Losers</h3>
+              <div className="space-y-2">
+                {assets
+                  .filter(a => a.daily_change_pct != null && a.daily_change_pct! < 0)
+                  .sort((a, b) => (a.daily_change_pct || 0) - (b.daily_change_pct || 0))
+                  .slice(0, 5)
+                  .map(a => (
+                    <div key={a.ticker} className="flex items-center justify-between py-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-medium text-sm">{a.ticker}</span>
+                        <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
+                      </div>
+                      <span className="text-red-400 text-sm font-medium">{a.daily_change_pct!.toFixed(2)}%</span>
+                    </div>
+                  ))}
+                {assets.filter(a => a.daily_change_pct != null && a.daily_change_pct! < 0).length === 0 && (
+                  <p className="text-gray-500 text-xs italic">No losers today</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Top Gainers & Losers */}
         {!loading && activePositions.length > 0 && (
