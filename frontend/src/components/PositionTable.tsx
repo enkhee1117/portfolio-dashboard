@@ -115,13 +115,15 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
     colKey,
     label,
     right,
+    hideOnMobile,
   }: {
     colKey: keyof PortfolioSnapshot;
     label: string;
     right?: boolean;
+    hideOnMobile?: boolean;
   }) => (
     <th
-      className={`px-3 py-3 font-semibold cursor-pointer hover:text-white text-xs ${right ? "text-right" : ""}`}
+      className={`px-3 py-3 font-semibold cursor-pointer hover:text-white text-xs ${right ? "text-right" : ""} ${hideOnMobile ? "hidden md:table-cell" : ""}`}
       onClick={() => handleSort(colKey)}
     >
       {label} <SortIcon colKey={colKey} />
@@ -182,14 +184,14 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
           <thead className="bg-gray-900/50 uppercase tracking-wider border-b border-gray-700 text-gray-400">
             <tr>
               <TH colKey="ticker" label="Ticker" />
-              <TH colKey="primary_theme" label="Primary" />
-              <TH colKey="secondary_theme" label="Secondary" />
+              <TH colKey="primary_theme" label="Primary" hideOnMobile />
+              <TH colKey="secondary_theme" label="Secondary" hideOnMobile />
               <TH colKey="quantity" label="Qty" right />
-              <TH colKey="average_price" label="Avg Price" right />
-              <TH colKey="current_price" label="Current" right />
+              <TH colKey="average_price" label="Avg Price" right hideOnMobile />
+              <TH colKey="current_price" label="Current" right hideOnMobile />
               <TH colKey="market_value" label="Mkt Value" right />
               <TH colKey="unrealized_pnl" label="Unreal. P&L" right />
-              <TH colKey="realized_pnl" label="Real. P&L" right />
+              <TH colKey="realized_pnl" label="Real. P&L" right hideOnMobile />
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-700">
@@ -214,7 +216,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2.5">
+                  <td className="hidden md:table-cell px-3 py-2.5">
                     {pos.primary_theme ? (
                       <button
                         onClick={(e) => { e.stopPropagation(); setFilterText(pos.primary_theme || ""); }}
@@ -226,7 +228,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                       <span className="text-gray-600 text-xs italic">--</span>
                     )}
                   </td>
-                  <td className="px-3 py-2.5">
+                  <td className="hidden md:table-cell px-3 py-2.5">
                     {pos.secondary_theme ? (
                       <button
                         onClick={(e) => { e.stopPropagation(); setFilterText(pos.secondary_theme || ""); }}
@@ -242,10 +244,10 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                   >
                     {pos.quantity.toLocaleString()}
                   </td>
-                  <td className="px-3 py-2.5 text-right text-gray-300">
+                  <td className="hidden md:table-cell px-3 py-2.5 text-right text-gray-300">
                     ${pos.average_price.toFixed(2)}
                   </td>
-                  <td className="px-3 py-2.5 text-right text-gray-300">
+                  <td className="hidden md:table-cell px-3 py-2.5 text-right text-gray-300">
                     ${pos.current_price.toFixed(2)}
                   </td>
                   <td className="px-3 py-2.5 text-right text-white font-medium">
@@ -257,7 +259,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                     ${pos.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td
-                    className={`px-3 py-2.5 text-right font-medium ${pos.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}
+                    className={`hidden md:table-cell px-3 py-2.5 text-right font-medium ${pos.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}
                   >
                     ${pos.realized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>

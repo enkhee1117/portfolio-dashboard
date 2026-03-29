@@ -7,7 +7,7 @@ import ThemeAnalysis from '../components/ThemeAnalysis';
 import PortfolioChart from '../components/PortfolioChart';
 import { PortfolioSnapshot, ThemeLists } from './types';
 import { useToast } from '../components/Toast';
-import { useCmdK } from '../components/useKeyboard';
+import { useCmdK, useEscape } from '../components/useKeyboard';
 
 export default function Home() {
   const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
@@ -17,6 +17,7 @@ export default function Home() {
 
   const toast = useToast();
   useCmdK();
+  useEscape(showManualTrade ? () => setShowManualTrade(false) : null);
 
   const copyValue = (val: number) => {
     navigator.clipboard.writeText(val.toFixed(2));
@@ -144,10 +145,10 @@ export default function Home() {
             <p className="mt-1 text-sm text-gray-400">Portfolio overview and P&L analysis</p>
           </div>
           <button
-            onClick={() => setShowManualTrade(!showManualTrade)}
-            className="px-4 py-2 border border-gray-600 rounded-md hover:bg-gray-800 text-gray-300 text-sm transition-colors"
+            onClick={() => setShowManualTrade(true)}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-md transition-colors"
           >
-            {showManualTrade ? 'Hide Form' : 'Add Trade'}
+            + Add Trade
           </button>
         </div>
 
@@ -316,9 +317,20 @@ export default function Home() {
         {/* Portfolio History Chart */}
         <PortfolioChart />
 
-        {/* Manual Trade Form */}
+        {/* Manual Trade Form — Modal */}
         {showManualTrade && (
-          <ManualTradeForm onTradeAdded={fetchPortfolio} />
+          <div
+            className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+            onClick={(e) => { if (e.target === e.currentTarget) setShowManualTrade(false); }}
+          >
+            <div className="bg-gray-900 rounded-xl shadow-xl border border-gray-700 w-full max-w-2xl">
+              <div className="flex justify-between items-center px-6 pt-5 pb-0">
+                <h2 className="text-lg font-bold text-white">Add Trade</h2>
+                <button onClick={() => setShowManualTrade(false)} className="text-gray-400 hover:text-white text-xl px-2 hover:bg-gray-700 rounded">&times;</button>
+              </div>
+              <ManualTradeForm onTradeAdded={() => { fetchPortfolio(); setShowManualTrade(false); }} />
+            </div>
+          </div>
         )}
 
         {/* Theme Analysis */}

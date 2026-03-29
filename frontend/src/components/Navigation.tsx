@@ -19,13 +19,19 @@ export default function Navigation() {
         {/* Brand */}
         <Link
           href="/"
-          className="text-lg font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400 whitespace-nowrap"
+          className="text-lg font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400 whitespace-nowrap hidden sm:block"
         >
           Portfolio Tracker
         </Link>
+        <Link
+          href="/"
+          className="text-lg font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400 sm:hidden"
+        >
+          PT
+        </Link>
 
         {/* Links */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5 flex-1 overflow-x-auto">
           {NAV_ITEMS.map(({ href, label }) => {
             const isActive =
               href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -33,13 +39,16 @@ export default function Navigation() {
               <Link
                 key={href}
                 href={href}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                className={`relative px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
                   isActive
-                    ? "bg-gray-800 text-white"
-                    : "text-gray-400 hover:text-gray-200 hover:bg-gray-800/50"
+                    ? "text-white"
+                    : "text-gray-400 hover:text-gray-200"
                 }`}
               >
                 {label}
+                {isActive && (
+                  <span className="absolute bottom-0 left-1 right-1 h-0.5 bg-indigo-500 rounded-full" />
+                )}
               </Link>
             );
           })}
