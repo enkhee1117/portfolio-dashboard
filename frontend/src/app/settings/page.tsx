@@ -302,14 +302,51 @@ export default function SettingsPage() {
             <div className="mt-4 p-4 bg-gray-900/50 rounded-lg border border-gray-700">
               <p className="text-sm text-green-400 font-medium">{refreshResult.message}</p>
               {refreshResult.failed.length > 0 && (
-                <details className="mt-2">
-                  <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-300">
-                    {refreshResult.failed.length} tickers failed (click to see)
-                  </summary>
-                  <p className="mt-2 text-xs text-gray-500 leading-relaxed">
-                    {refreshResult.failed.join(", ")}
+                <div className="mt-3">
+                  <p className="text-xs text-red-400 font-medium mb-2">
+                    {refreshResult.failed.length} tickers failed &mdash; these may be delisted, acquired, or have changed tickers:
                   </p>
-                </details>
+                  <div className="flex flex-wrap gap-2">
+                    {refreshResult.failed.map((ticker) => (
+                      <span
+                        key={ticker}
+                        className="inline-flex items-center gap-1.5 px-2 py-1 text-xs bg-red-900/30 text-red-300 border border-red-700/50 rounded"
+                      >
+                        {ticker}
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Remove "${ticker}" from asset list?\n\nTrade history will be preserved for tax purposes.`)) return;
+                            try {
+                              const res = await fetch(`/api/assets/${ticker}`, { method: "DELETE" });
+                              if (res.ok) {
+                                setRefreshResult({
+                                  ...refreshResult,
+                                  failed: refreshResult.failed.filter((t) => t !== ticker),
+                                });
+                              }
+                            } catch {}
+                          }}
+                          className="text-red-400 hover:text-white text-xs font-bold ml-0.5"
+                          title={`Remove ${ticker} from asset list`}
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Remove all ${refreshResult.failed.length} failed tickers from asset list?\n\nTrade history will be preserved.`)) return;
+                      for (const ticker of refreshResult.failed) {
+                        try { await fetch(`/api/assets/${ticker}`, { method: "DELETE" }); } catch {}
+                      }
+                      setRefreshResult({ ...refreshResult, failed: [] });
+                    }}
+                    className="mt-3 px-3 py-1.5 text-xs bg-red-900/40 hover:bg-red-900/60 text-red-300 border border-red-700/50 rounded transition-colors"
+                  >
+                    Remove all failed tickers
+                  </button>
+                </div>
               )}
             </div>
           )}
