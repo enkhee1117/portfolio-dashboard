@@ -964,15 +964,18 @@ def portfolio_history(period: str = "1y", db=Depends(get_db)):
     from datetime import timedelta
 
     now = datetime.utcnow()
-    period_map = {
-        "1m": timedelta(days=30),
-        "3m": timedelta(days=90),
-        "6m": timedelta(days=180),
-        "1y": timedelta(days=365),
-        "all": timedelta(days=365 * 10),
-    }
-    delta = period_map.get(period, timedelta(days=365))
-    start_str = (now - delta).strftime('%Y-%m-%d')
+    if period == "ytd":
+        start_str = f"{now.year}-01-01"
+    else:
+        period_map = {
+            "1m": timedelta(days=30),
+            "3m": timedelta(days=90),
+            "6m": timedelta(days=180),
+            "1y": timedelta(days=365),
+            "all": timedelta(days=365 * 10),
+        }
+        delta = period_map.get(period, timedelta(days=365))
+        start_str = (now - delta).strftime('%Y-%m-%d')
 
     # Read from portfolio_snapshots collection — sorted by date
     docs = db.collection('portfolio_snapshots').stream()
@@ -999,15 +1002,18 @@ def theme_baskets(period: str = "1y", db=Depends(get_db)):
     from collections import defaultdict
 
     now = datetime.utcnow()
-    period_map = {
-        "1m": timedelta(days=30),
-        "3m": timedelta(days=90),
-        "6m": timedelta(days=180),
-        "1y": timedelta(days=365),
-        "all": timedelta(days=365 * 10),
-    }
-    delta = period_map.get(period, timedelta(days=365))
-    start_str = (now - delta).strftime('%Y-%m-%d')
+    if period == "ytd":
+        start_str = f"{now.year}-01-01"
+    else:
+        period_map = {
+            "1m": timedelta(days=30),
+            "3m": timedelta(days=90),
+            "6m": timedelta(days=180),
+            "1y": timedelta(days=365),
+            "all": timedelta(days=365 * 10),
+        }
+        delta = period_map.get(period, timedelta(days=365))
+        start_str = (now - delta).strftime('%Y-%m-%d')
     INITIAL_VALUE = 10000.0
 
     # Load assets grouped by primary theme

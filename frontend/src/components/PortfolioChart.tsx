@@ -11,6 +11,7 @@ import {
 } from "recharts";
 
 const PERIODS = [
+  { key: "ytd", label: "YTD" },
   { key: "1m", label: "1M" },
   { key: "3m", label: "3M" },
   { key: "6m", label: "6M" },
@@ -19,7 +20,7 @@ const PERIODS = [
 ];
 
 export default function PortfolioChart() {
-  const [period, setPeriod] = useState("1y");
+  const [period, setPeriod] = useState("ytd");
   const [data, setData] = useState<PortfolioHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
