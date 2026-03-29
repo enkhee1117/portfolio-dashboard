@@ -10,7 +10,8 @@ export default function AssetsPage() {
 
   // Filter & sort
   const [filterText, setFilterText] = useState("");
-  const [sortKey, setSortKey] = useState<keyof Asset>("ticker");
+  const [themeFilter, setThemeFilter] = useState("");
+  const [sortKey, setSortKey] = useState<string>("ticker");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
   // Add form
@@ -39,35 +40,53 @@ export default function AssetsPage() {
 
   useEffect(() => { fetchAssets(); }, []);
 
+  // All unique themes for the dropdown filter
+  const allThemes = useMemo(() => {
+    const set = new Set<string>();
+    assets.forEach((a) => {
+      if (a.primary_theme) set.add(a.primary_theme);
+      if (a.secondary_theme) set.add(a.secondary_theme);
+    });
+    return Array.from(set).sort();
+  }, [assets]);
+
   // Sort & filter
-  const handleSort = (key: keyof Asset) => {
+  const handleSort = (key: string) => {
     if (sortKey === key) {
       setSortOrder(sortOrder === "asc" ? "desc" : "asc");
     } else {
       setSortKey(key);
-      setSortOrder("asc");
+      setSortOrder(key === "ticker" || key === "primary_theme" ? "asc" : "desc");
     }
   };
 
   const filtered = useMemo(() => {
     const q = filterText.toLowerCase();
-    let data = assets.filter(
-      (a) =>
+    let data = assets.filter((a) => {
+      // Text filter
+      const matchesText =
+        !q ||
         a.ticker.toLowerCase().includes(q) ||
         a.primary_theme.toLowerCase().includes(q) ||
-        a.secondary_theme.toLowerCase().includes(q)
-    );
+        a.secondary_theme.toLowerCase().includes(q);
+      // Theme dropdown filter
+      const matchesTheme =
+        !themeFilter ||
+        a.primary_theme === themeFilter ||
+        a.secondary_theme === themeFilter;
+      return matchesText && matchesTheme;
+    });
     data.sort((a, b) => {
-      const vA = a[sortKey] ?? "";
-      const vB = b[sortKey] ?? "";
+      const vA = (a as any)[sortKey] ?? "";
+      const vB = (b as any)[sortKey] ?? "";
       if (vA < vB) return sortOrder === "asc" ? -1 : 1;
       if (vA > vB) return sortOrder === "asc" ? 1 : -1;
       return 0;
     });
     return data;
-  }, [assets, filterText, sortKey, sortOrder]);
+  }, [assets, filterText, themeFilter, sortKey, sortOrder]);
 
-  const SortIcon = ({ colKey }: { colKey: keyof Asset }) => {
+  const SortIcon = ({ colKey }: { colKey: string }) => {
     if (sortKey !== colKey) return <span className="text-gray-600 ml-1">&#8693;</span>;
     return <span className="ml-1 text-white">{sortOrder === "asc" ? "\u2191" : "\u2193"}</span>;
   };
@@ -161,6 +180,11 @@ export default function AssetsPage() {
             <h1 className="text-2xl font-bold text-white">Asset Registry</h1>
             <p className="mt-1 text-sm text-gray-400">
               Manage stock themes and metadata &mdash; {assets.length} assets registered
+              {themeFilter && (
+                <span className="ml-2 text-indigo-400">
+                  (filtered: {themeFilter})
+                </span>
+              )}
             </p>
           </div>
           <button
@@ -202,9 +226,7 @@ export default function AssetsPage() {
                   required
                 />
                 <datalist id="primary-themes">
-                  {themes.primary.map((t) => (
-                    <option key={t} value={t} />
-                  ))}
+                  {themes.primary.map((t) => <option key={t} value={t} />)}
                 </datalist>
               </div>
               <div>
@@ -219,9 +241,7 @@ export default function AssetsPage() {
                   required
                 />
                 <datalist id="secondary-themes">
-                  {themes.secondary.map((t) => (
-                    <option key={t} value={t} />
-                  ))}
+                  {themes.secondary.map((t) => <option key={t} value={t} />)}
                 </datalist>
               </div>
               <div>
@@ -246,14 +266,37 @@ export default function AssetsPage() {
           </form>
         )}
 
-        {/* Filter */}
-        <input
-          type="text"
-          placeholder="Search by ticker or theme..."
-          value={filterText}
-          onChange={(e) => setFilterText(e.target.value)}
-          className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 w-full md:w-80"
-        />
+        {/* Filters */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <input
+            type="text"
+            placeholder="Search by ticker or theme..."
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 w-full md:w-72 text-sm"
+          />
+          <select
+            value={themeFilter}
+            onChange={(e) => setThemeFilter(e.target.value)}
+            className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 text-sm"
+          >
+            <option value="">All Themes</option>
+            {allThemes.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          {themeFilter && (
+            <button
+              onClick={() => setThemeFilter("")}
+              className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700"
+            >
+              Clear filter
+            </button>
+          )}
+          <span className="text-xs text-gray-500 ml-auto">
+            {filtered.length} of {assets.length} shown
+          </span>
+        </div>
 
         {/* Table */}
         {loading ? (
@@ -265,39 +308,45 @@ export default function AssetsPage() {
             <table className="min-w-full text-left text-sm whitespace-nowrap">
               <thead className="bg-gray-900/50 uppercase tracking-wider border-b border-gray-700 text-gray-400">
                 <tr>
-                  <th className="px-6 py-4 cursor-pointer hover:text-white" onClick={() => handleSort("ticker")}>
+                  <th className="px-4 py-3 cursor-pointer hover:text-white text-xs" onClick={() => handleSort("ticker")}>
                     Ticker <SortIcon colKey="ticker" />
                   </th>
-                  <th className="px-6 py-4 cursor-pointer hover:text-white" onClick={() => handleSort("primary_theme")}>
-                    Primary Theme <SortIcon colKey="primary_theme" />
+                  <th className="px-4 py-3 cursor-pointer hover:text-white text-xs" onClick={() => handleSort("primary_theme")}>
+                    Primary <SortIcon colKey="primary_theme" />
                   </th>
-                  <th className="px-6 py-4 cursor-pointer hover:text-white" onClick={() => handleSort("secondary_theme")}>
-                    Secondary Theme <SortIcon colKey="secondary_theme" />
+                  <th className="px-4 py-3 cursor-pointer hover:text-white text-xs" onClick={() => handleSort("secondary_theme")}>
+                    Secondary <SortIcon colKey="secondary_theme" />
                   </th>
-                  <th className="px-6 py-4 text-right cursor-pointer hover:text-white" onClick={() => handleSort("price")}>
+                  <th className="px-4 py-3 text-right cursor-pointer hover:text-white text-xs" onClick={() => handleSort("price")}>
                     Price <SortIcon colKey="price" />
                   </th>
-                  <th className="px-6 py-4 text-right">Actions</th>
+                  <th className="px-4 py-3 text-right text-xs">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700">
                 {filtered.map((asset) => (
                   <tr key={asset.ticker} className="hover:bg-gray-700/50 transition-colors">
-                    <td className="px-6 py-3 font-medium text-white">{asset.ticker}</td>
-                    <td className="px-6 py-3">
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">
+                    <td className="px-4 py-2.5 font-medium text-white">{asset.ticker}</td>
+                    <td className="px-4 py-2.5">
+                      <button
+                        onClick={() => setThemeFilter(asset.primary_theme)}
+                        className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-900/60 transition-colors"
+                      >
                         {asset.primary_theme}
-                      </span>
+                      </button>
                     </td>
-                    <td className="px-6 py-3">
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300 border border-cyan-700/50">
+                    <td className="px-4 py-2.5">
+                      <button
+                        onClick={() => setThemeFilter(asset.secondary_theme)}
+                        className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300 border border-cyan-700/50 hover:bg-cyan-900/60 transition-colors"
+                      >
                         {asset.secondary_theme}
-                      </span>
+                      </button>
                     </td>
-                    <td className="px-6 py-3 text-right text-gray-300">
+                    <td className="px-4 py-2.5 text-right text-gray-300">
                       ${asset.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
-                    <td className="px-6 py-3 text-right space-x-2">
+                    <td className="px-4 py-2.5 text-right space-x-2">
                       <button onClick={() => openEdit(asset)} className="text-blue-400 hover:text-blue-300 text-xs">
                         Edit
                       </button>
@@ -322,7 +371,10 @@ export default function AssetsPage() {
 
       {/* Edit Modal */}
       {editing && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+          onClick={(e) => { if (e.target === e.currentTarget) setEditing(null); }}
+        >
           <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-md p-6">
             <h2 className="text-xl font-bold text-white mb-1">Edit {editing.ticker}</h2>
             <p className="text-sm text-gray-400 mb-4">Update theme assignments and price</p>
@@ -338,9 +390,7 @@ export default function AssetsPage() {
                   required
                 />
                 <datalist id="edit-primary-themes">
-                  {themes.primary.map((t) => (
-                    <option key={t} value={t} />
-                  ))}
+                  {themes.primary.map((t) => <option key={t} value={t} />)}
                 </datalist>
               </div>
               <div>
@@ -354,9 +404,7 @@ export default function AssetsPage() {
                   required
                 />
                 <datalist id="edit-secondary-themes">
-                  {themes.secondary.map((t) => (
-                    <option key={t} value={t} />
-                  ))}
+                  {themes.secondary.map((t) => <option key={t} value={t} />)}
                 </datalist>
               </div>
               <div>
