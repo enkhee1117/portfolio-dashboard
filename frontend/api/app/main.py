@@ -285,7 +285,7 @@ def last_refresh(db=Depends(get_db)):
                 lu = lu.replace(tzinfo=None)
             if latest is None or lu > latest:
                 latest = lu
-    return {"last_refresh": latest.isoformat() if latest else None}
+    return {"last_refresh": (latest.isoformat() + "Z") if latest else None}
 
 
 @app.post("/assets/refresh-prices")
