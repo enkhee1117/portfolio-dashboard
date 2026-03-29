@@ -99,24 +99,39 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
     type: "primary" | "secondary",
     label: string
   ) => {
-    const chartHeight = Math.max(280, data.length * 30);
+    const rowHeight = 30;
+    const chartHeight = Math.max(280, data.length * rowHeight);
     const isActive = selectedType === type;
+    const marginTop = 5;
+    const marginBottom = 25; // space for X axis
+
+    // Click handler that maps Y position to theme name
+    const handleChartClick = (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const chartArea = chartHeight - marginTop - marginBottom;
+      const rowIndex = Math.floor((y - marginTop) / (chartArea / data.length));
+      if (rowIndex >= 0 && rowIndex < data.length) {
+        handleBarClick(type, data[rowIndex].name);
+      }
+    };
 
     return (
       <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
         <h3 className="text-lg font-semibold text-gray-200 mb-1">{label}</h3>
         <p className="text-xs text-gray-400 mb-4">
-          Click any bar to see individual positions
+          Click any row to see individual positions
         </p>
         <div
           style={{ height: chartHeight, minWidth: 0 }}
-          className="w-full overflow-hidden"
+          className="w-full overflow-hidden cursor-pointer"
+          onClick={handleChartClick}
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={data}
               layout="vertical"
-              margin={{ top: 0, right: 20, left: 0, bottom: 0 }}
+              margin={{ top: marginTop, right: 20, left: 0, bottom: marginBottom }}
             >
               <XAxis
                 type="number"
@@ -129,7 +144,7 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
                 type="category"
                 dataKey="name"
                 width={140}
-                tick={{ fill: "#d1d5db", fontSize: 12 }}
+                tick={{ fill: "#d1d5db", fontSize: 12, cursor: "pointer" }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -149,8 +164,6 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
               <Bar
                 dataKey="value"
                 radius={[0, 4, 4, 0]}
-                cursor="pointer"
-                onClick={(d: any) => handleBarClick(type, d.name as string)}
               >
                 {data.map((entry, index) => (
                   <Cell
@@ -183,7 +196,7 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
           className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
           onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
         >
-          <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-3xl max-h-[80vh] flex flex-col">
+          <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-6xl max-h-[80vh] flex flex-col">
             {/* Header */}
             <div className="flex justify-between items-center p-6 pb-4 border-b border-gray-700">
               <div>

@@ -273,7 +273,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
           className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
           onClick={(e) => { if (e.target === e.currentTarget) setSelectedTicker(null); }}
         >
-          <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-4xl max-h-[85vh] flex flex-col">
+          <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-5xl max-h-[85vh] flex flex-col">
             {/* Header */}
             <div className="p-6 pb-4 border-b border-gray-700">
               <div className="flex justify-between items-start">
