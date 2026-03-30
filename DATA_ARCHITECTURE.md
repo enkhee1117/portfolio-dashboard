@@ -469,3 +469,5 @@ Before building any feature that touches data:
 - [ ] **Source vs derived?** Never modify source data as a side effect. Derived data can always be regenerated
 - [ ] **Gap-aware?** Can the operation handle partial data? Does it fetch only what's missing, not everything or nothing?
 - [ ] **Market-calendar-aware?** Does the code compare against last trading day, not calendar date? Does it skip weekends and holidays?
+- [ ] **Deployment-safe?** All dependencies in requirements.txt? No background threads in serverless? Module paths work on Vercel?
+- [ ] **Tests pass?** Run full test suite before pushing. Tests are the safety net between development and production.

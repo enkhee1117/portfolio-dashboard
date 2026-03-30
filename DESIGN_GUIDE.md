@@ -272,6 +272,43 @@ python3 -m pytest tests/ --ignore=tests/test_smoke.py -v
 
 ---
 
+## Deployment
+
+### Local vs Production Differences
+
+| Aspect | Local dev | Vercel production |
+|--------|-----------|-------------------|
+| API routing | Next.js rewrite proxy (`localhost:8000`) | Vercel serverless (`/api/index.py`) |
+| Python path | Automatic (uvicorn runs from `api/`) | Must add `sys.path.insert(0, os.path.dirname(__file__))` |
+| API prefix | Routes at `/portfolio`, `/trades`, etc. | Mounted under `/api` via `app.mount("/api", api_app)` |
+| APScheduler | Background thread runs daily at 5:30 PM ET | Disabled (serverless can't run background threads) |
+| Firebase creds | `firebase-credentials.json` file | `FIREBASE_CREDENTIALS_JSON` env var |
+| File uploads | `python-multipart` installed locally | Must be in `requirements.txt` |
+
+### Deployment Lessons Learned
+
+1. **Every Python dependency must be in `requirements.txt`** — even ones that "just work" locally because they're installed globally. If FastAPI uses `UploadFile`, you need `python-multipart` explicitly listed.
+
+2. **Vercel serverless doesn't support background threads** — APScheduler, `threading.Thread`, and any long-running background processes won't work. Check `VERCEL` env var and disable accordingly.
+
+3. **Module paths differ between local and serverless** — Vercel runs from `/var/task/` where the Python path doesn't include your `api/` directory. Always add `sys.path.insert(0, os.path.dirname(__file__))` in the entry point.
+
+4. **FastAPI route prefix must match deployment** — locally routes are at `/portfolio`, but Vercel routes requests to `/api/portfolio`. Use `app.mount("/api", api_app)` in the entry point.
+
+5. **Test the API endpoint directly after every deploy** — `curl https://your-app.vercel.app/api/portfolio` should return JSON, not HTML.
+
+### Pre-Push Checklist
+
+Before pushing code that will auto-deploy:
+
+- [ ] `npx next build` passes locally
+- [ ] `pytest tests/ --ignore=tests/test_smoke.py` passes (76+ tests)
+- [ ] `requirements.txt` includes any new Python packages
+- [ ] No `import` at module level that might fail on serverless
+- [ ] Tested locally with both servers running
+
+---
+
 ## Feature Checklist
 
 When adding a new feature, check these:
