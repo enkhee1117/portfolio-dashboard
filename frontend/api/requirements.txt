@@ -1,4 +1,5 @@
 fastapi
+python-multipart
 firebase-admin
 google-cloud-firestore
 pandas
