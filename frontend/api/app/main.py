@@ -339,25 +339,159 @@ def _run_price_refresh():
     return {"updated": updated, "failed": failed}
 
 
-def _scheduled_refresh():
-    """Wrapper for the scheduler — skips weekends/holidays, logs errors."""
-    # Skip if today is not a trading day (weekends, holidays)
+def _intraday_price_refresh():
+    """Lightweight refresh: only update prices for active portfolio tickers.
+    Runs every 15 min during market hours. Updates asset_prices + snapshot prices."""
+    import yfinance as yf
+    import pandas as pd
+    import math
+
     today = datetime.utcnow()
-    if today.weekday() >= 5:  # Saturday=5, Sunday=6
+    if today.weekday() >= 5:
+        return
+
+    db = get_db()
+
+    # Get active tickers from all users' latest snapshots
+    active_tickers = set()
+    for user_doc in db.collection('users').stream():
+        snap_date = today.strftime('%Y-%m-%d')
+        snap = user_doc.reference.collection('portfolio_snapshots').document(snap_date).get()
+        if snap.exists:
+            for p in snap.to_dict().get('positions', []):
+                if p.get('quantity', 0) > 0:
+                    active_tickers.add(p.get('ticker'))
+
+    if not active_tickers:
+        return
+
+    tickers = sorted(active_tickers)
+    logger.info(f"Intraday refresh: {len(tickers)} active tickers")
+
+    try:
+        data = yf.download(tickers, period='1d', progress=False)
+    except Exception as e:
+        logger.error(f"Intraday refresh yfinance error: {e}")
+        return
+
+    if data.empty:
+        return
+
+    is_multi = isinstance(data.columns, pd.MultiIndex)
+    now = datetime.utcnow()
+    batch = db.batch()
+    batch_count = 0
+    updated = 0
+
+    for ticker in tickers:
+        try:
+            if is_multi:
+                close_series = data['Close'][ticker].dropna()
+            else:
+                close_series = data['Close'].dropna()
+
+            if len(close_series) < 1:
+                continue
+
+            close_price = float(close_series.iloc[-1])
+            prev_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else None
+
+            daily_change = None
+            daily_change_pct = None
+            if prev_close and prev_close > 0 and not math.isnan(prev_close):
+                daily_change = round(close_price - prev_close, 2)
+                daily_change_pct = round((daily_change / prev_close) * 100, 2)
+
+            if close_price > 0 and not math.isnan(close_price):
+                doc_ref = db.collection('asset_prices').document(ticker)
+                batch.update(doc_ref, {
+                    "price": round(close_price, 2),
+                    "previous_close": round(prev_close, 2) if prev_close and not math.isnan(prev_close) else None,
+                    "daily_change": daily_change,
+                    "daily_change_pct": daily_change_pct,
+                    "last_updated": now,
+                })
+                batch_count += 1
+                updated += 1
+
+                if batch_count >= 400:
+                    batch.commit()
+                    batch = db.batch()
+                    batch_count = 0
+        except Exception:
+            continue
+
+    if batch_count > 0:
+        batch.commit()
+
+    # Update prices in all users' cached snapshots
+    if updated > 0:
+        # Build price lookup from what we just fetched
+        price_map = {}
+        for ticker in tickers:
+            try:
+                if is_multi:
+                    close_series = data['Close'][ticker].dropna()
+                else:
+                    close_series = data['Close'].dropna()
+                if len(close_series) > 0:
+                    price_map[ticker] = round(float(close_series.iloc[-1]), 2)
+            except Exception:
+                continue
+
+        for user_doc in db.collection('users').stream():
+            snap_date = today.strftime('%Y-%m-%d')
+            snap_ref = user_doc.reference.collection('portfolio_snapshots').document(snap_date)
+            snap = snap_ref.get()
+            if not snap.exists:
+                continue
+            snapshot = snap.to_dict()
+            positions = snapshot.get('positions', [])
+            total_value = 0.0
+            changed = False
+            for p in positions:
+                t = p.get('ticker')
+                if t in price_map:
+                    new_price = price_map[t]
+                    old_price = p.get('current_price', 0)
+                    if new_price != old_price:
+                        p['current_price'] = new_price
+                        qty = p.get('quantity', 0)
+                        avg = p.get('average_price', 0)
+                        p['market_value'] = round(qty * new_price, 2)
+                        p['unrealized_pnl'] = round((new_price - avg) * qty, 2) if abs(qty) > 0.0001 else 0.0
+                        changed = True
+                total_value += p.get('market_value', 0)
+            if changed:
+                snapshot['total_value'] = round(total_value, 2)
+                snapshot['computed_at'] = now
+                snap_ref.set(snapshot)
+
+    logger.info(f"Intraday refresh complete: {updated} tickers updated")
+
+
+def _scheduled_refresh():
+    """End-of-day full refresh — all tickers, RSI, full snapshot recompute."""
+    today = datetime.utcnow()
+    if today.weekday() >= 5:
         logger.info(f"Skipping scheduled refresh — weekend ({today.strftime('%A')})")
         return
 
-    logger.info("Scheduled price refresh starting...")
+    logger.info("End-of-day price refresh starting...")
     try:
         result = _run_price_refresh()
         if result['updated'] == 0 and len(result['failed']) == len(result.get('failed', [])):
             logger.info("No price updates — market may be closed (holiday)")
             return
         logger.info(f"Scheduled refresh result: {result['updated']} updated, {len(result['failed'])} failed")
-        # Recompute RSI and portfolio snapshot
         db = get_db()
         compute_and_store_rsi(db)
-        calculator.compute_and_store_snapshot(db)
+        # Full recompute for all users
+        for user_doc in db.collection('users').stream():
+            try:
+                calculator.compute_and_store_snapshot(db, user_id=user_doc.id)
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"Scheduled refresh error: {e}")
 
@@ -375,6 +509,7 @@ async def lifespan(app):
             from apscheduler.schedulers.background import BackgroundScheduler
             from apscheduler.triggers.cron import CronTrigger
             scheduler = BackgroundScheduler()
+            # End-of-day full refresh: all tickers, RSI, full snapshot recompute
             scheduler.add_job(
                 _scheduled_refresh,
                 CronTrigger(
@@ -385,8 +520,19 @@ async def lifespan(app):
                 id="daily_price_refresh",
                 replace_existing=True,
             )
+            # Intraday refresh: active portfolio tickers only, every 15 min during market hours
+            scheduler.add_job(
+                _intraday_price_refresh,
+                CronTrigger(
+                    hour="10-16", minute="*/15",
+                    day_of_week="mon-fri",
+                    timezone="US/Eastern",
+                ),
+                id="intraday_price_refresh",
+                replace_existing=True,
+            )
             scheduler.start()
-            logger.info("Price refresh scheduler started — daily at 5:30 PM ET")
+            logger.info("Schedulers started — intraday every 15min (10AM-4PM ET) + daily at 5:30 PM ET")
         except Exception as e:
             logger.warning(f"Scheduler not started: {e}")
     else:
@@ -1095,10 +1241,18 @@ def refresh_status(db=Depends(get_db)):
         if job.next_run_time:
             next_run = job.next_run_time.isoformat()
 
+    # Next intraday refresh
+    next_intraday = None
+    if scheduler and scheduler.get_job("intraday_price_refresh"):
+        job = scheduler.get_job("intraday_price_refresh")
+        if job.next_run_time:
+            next_intraday = job.next_run_time.isoformat()
+
     return {
         "last_refresh": (latest.isoformat() + "Z") if latest else None,
         "next_scheduled": next_run,
-        "schedule": "Weekdays at 5:30 PM ET (after market close)",
+        "next_intraday": next_intraday,
+        "schedule": "Active positions: every 15 min during market hours (10AM-4PM ET). Full refresh: 5:30 PM ET.",
     }
 
 

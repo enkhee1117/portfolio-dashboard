@@ -422,29 +422,47 @@ npx vitest            # watch mode
 ### Design principles
 - **User-scoped reads are O(user's tickers)**, not O(total tickers). GET /assets, calculator, and portfolio endpoints only look up tickers the user owns.
 - **Shared collections (`asset_prices`, `price_series`) are write-only caches** — written by price refresh and RSI compute, never streamed by user requests.
-- **Price refresh is scoped to active tickers** — only refreshes tickers that at least one user holds (derived from `trades` collection), not all entries in `asset_prices`.
+- **Delta updates over full recomputes** — trade CRUD replays only the affected ticker (~5 reads) instead of all trades (~2500 reads).
+- **Two-tier price refresh** — intraday for active positions only (93 tickers), full refresh at market close (all tickers).
+
+### Price refresh schedule
+| Job | When | What | Tickers | Cost |
+|---|---|---|---|---|
+| **Intraday** | Every 15 min, 10AM-4PM ET, weekdays | Fetch latest prices for active portfolio positions, update snapshot market values | ~93 active | ~2,400 writes/day |
+| **End-of-day** | 5:30 PM ET, weekdays | Full refresh all tickers, RSI recompute, full snapshot recompute for accuracy | All (~397) | ~2,500 reads + ~800 writes |
+
+### Portfolio update strategy
+| Trigger | Method | Cost | Latency |
+|---|---|---|---|
+| **Trade CRUD** | Delta: replay affected ticker only (~5 trades), update snapshot position | ~5-10 reads + 1 write | <500ms |
+| **Intraday refresh** | Update prices in cached snapshot for active tickers | ~93 writes | Background, 0 UX impact |
+| **End-of-day** | Full recompute from all trades + latest prices (corrects any drift) | ~2,500 reads + 1 write | Background, 0 UX impact |
+| **On-demand** | Settings → "Recompute Portfolio" button | ~2,500 reads + 1 write | User-triggered |
 
 ### Implemented optimizations
 | Optimization | Before | After |
 |---|---|---|
+| Trade CRUD portfolio update | Full recompute (~2500 reads) | Delta update (~5 reads) |
+| Price refresh scope | All tickers every time | Active positions intraday, all tickers at close |
 | yfinance download | One call with all tickers (timeout at ~5000) | Chunked in batches of 500 |
-| Price refresh ticker source | Stream all `asset_prices` docs | Query unique tickers from `trades` |
-| RSI compute | Stream all `asset_prices` to build ticker set, then stream `price_series` | Stream `price_series` only, use `set(merge=True)` to upsert |
-| Refresh status | Stream all `asset_prices` to find latest `last_updated` | `order_by('last_updated').limit(1)` — 1 read |
-| GET /assets | Stream all `asset_prices` (old) | Per-ticker `.document(ticker).get()` for user's tickers only |
-| Assets tab (frontend) | Render all assets in one table | Paginated at 50 per page with Prev/Next controls |
+| GET /assets | Stream all trades + sequential price reads | Batch `db.get_all()` from `asset_themes` |
+| Trades tab | Loaded on page mount (2058 docs) | Lazy-loaded only when tab clicked |
+| RSI compute | Stream all `asset_prices` + `price_series` | Stream `price_series` only, `set(merge=True)` |
+| Refresh status | Stream all `asset_prices` | `order_by().limit(1)` — 1 read |
+| Theme baskets | Sequential `price_series` reads | Batch `db.get_all()` |
+| Assets tab (frontend) | Render all at once | Paginated at 50 per page |
 
-### Cost estimates at scale (daily refresh)
-| Ticker count | Reads/day | Writes/day | Est. monthly cost |
+### Cost estimates
+| Scenario | Reads/day | Writes/day | Est. monthly cost |
 |---|---|---|---|
-| 100 | ~200 | ~400 | ~$3 |
-| 1,000 | ~2,000 | ~4,000 | ~$25 |
-| 5,000 | ~10,000 | ~20,000 | ~$120 |
+| Intraday refresh (93 tickers, 26×/day) | 0 | ~2,400 | ~$1.50 |
+| End-of-day full refresh | ~2,500 | ~800 | ~$0.50 |
+| Trade CRUD (10 trades/day) | ~100 | ~10 | ~$0.01 |
+| **Total** | **~2,600** | **~3,210** | **~$2/month** |
 
 ### Future optimizations (not yet needed)
 - **Redis/in-memory cache** for `asset_prices` reads if Firestore costs become significant
-- **Server-side pagination** for GET /assets if users have >500 tickers
-- **Debounced price refresh** — skip tickers refreshed within the last hour
+- **WebSocket push** for real-time price updates to connected clients
 - **Firestore composite indexes** on `trades` collection for `user_id + ticker` if query performance degrades
 
 ---
