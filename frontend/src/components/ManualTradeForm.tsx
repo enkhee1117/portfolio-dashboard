@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { Asset, ThemeLists } from "../app/types";
 import { useToast } from "./Toast";
+import { apiCall } from "../lib/api";
 
 interface ManualTradeFormProps {
   onTradeAdded: () => void;
@@ -30,7 +31,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
 
   // Fetch assets and themes on mount
   useEffect(() => {
-    Promise.all([fetch("/api/assets"), fetch("/api/assets/themes")])
+    Promise.all([apiCall("/api/assets"), apiCall("/api/assets/themes")])
       .then(async ([aRes, tRes]) => {
         if (aRes.ok) setAssets(await aRes.json());
         if (tRes.ok) setThemes(await tRes.json());
@@ -68,7 +69,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
     }
     setRegLoading(true);
     try {
-      const res = await fetch("/api/assets", {
+      const res = await apiCall("/api/assets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -106,7 +107,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
     }
     setLoading(true);
     try {
-      let res = await fetch("/api/trades/manual", {
+      let res = await apiCall("/api/trades/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -118,7 +119,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
 
       if (res.status === 409) {
         if (confirm("This looks like a duplicate trade. Add it anyway?")) {
-          res = await fetch("/api/trades/manual?force=true", {
+          res = await apiCall("/api/trades/manual?force=true", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

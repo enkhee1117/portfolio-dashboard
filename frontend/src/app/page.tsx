@@ -6,6 +6,7 @@ import ThemeAnalysis from '../components/ThemeAnalysis';
 import PortfolioChart from '../components/PortfolioChart';
 import { PortfolioSnapshot, ThemeLists, Asset } from './types';
 import { useToast } from '../components/Toast';
+import { apiCall } from "../lib/api";
 import { useCmdK, useEscape } from '../components/useKeyboard';
 
 export default function Home() {
@@ -33,7 +34,7 @@ export default function Home() {
   const fetchPortfolio = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/portfolio');
+      const res = await apiCall('/api/portfolio');
       if (res.ok) {
         const data = await res.json();
         setPositions(data);
@@ -49,7 +50,7 @@ export default function Home() {
 
   useEffect(() => {
     fetchPortfolio();
-    fetch("/api/assets").then(r => r.json()).then(setAssets).catch(console.error);
+    apiCall("/api/assets").then(r => r.json()).then(setAssets).catch(console.error);
   }, []);
 
   const totalMarketValue = positions.reduce((acc, pos) => acc + pos.market_value, 0);
@@ -80,7 +81,7 @@ export default function Home() {
       return;
     }
     try {
-      const res = await fetch('/api/assets/themes');
+      const res = await apiCall('/api/assets/themes');
       if (res.ok) setThemes(await res.json());
     } catch {}
     // Init fix forms for each unassigned ticker
@@ -102,13 +103,13 @@ export default function Home() {
     setSavingTicker(ticker);
     try {
       // Try PUT first (asset exists but themes are null), fall back to POST (asset doesn't exist)
-      let res = await fetch(`/api/assets/${ticker}`, {
+      let res = await apiCall(`/api/assets/${ticker}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ primary_theme: form.primary, secondary_theme: form.secondary }),
       });
       if (res.status === 404) {
-        res = await fetch('/api/assets', {
+        res = await apiCall('/api/assets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

@@ -2,6 +2,7 @@
 import { PortfolioSnapshot, Trade } from "../app/types";
 import { useState, useMemo, useEffect } from "react";
 import { useEscape } from "./useKeyboard";
+import { apiCall } from "../lib/api";
 
 interface PositionTableProps {
   positions: PortfolioSnapshot[];
@@ -67,7 +68,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
     setSelectedTicker(ticker);
     setLoadingTrades(true);
     setTickerTrades([]);
-    fetch("/api/trades")
+    apiCall("/api/trades")
       .then((r) => r.json())
       .then((allTrades: Trade[]) => {
         const filtered = allTrades

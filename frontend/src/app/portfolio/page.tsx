@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import PositionTable from "../../components/PositionTable";
 import { PortfolioSnapshot, Trade, Asset, ThemeLists } from "../types";
 import { useToast } from "../../components/Toast";
+import { apiCall } from "../../lib/api";
 import { useEscape, useCmdK } from "../../components/useKeyboard";
 
 type TabType = "positions" | "trades" | "assets";
@@ -50,7 +51,7 @@ function PortfolioContent() {
     setDetailTicker(ticker);
     setDetailLoading(true);
     setDetailTrades([]);
-    fetch("/api/trades")
+    apiCall("/api/trades")
       .then((r) => r.json())
       .then((allTrades: Trade[]) => {
         setDetailTrades(
@@ -64,19 +65,19 @@ function PortfolioContent() {
   useEscape(detailTicker ? () => setDetailTicker(null) : editingTrade ? () => setEditingTrade(null) : null);
 
   useEffect(() => {
-    fetch("/api/portfolio")
+    apiCall("/api/portfolio")
       .then((r) => r.json())
       .then((data) => setPositions(data))
       .catch(console.error)
       .finally(() => setPosLoading(false));
 
-    fetch("/api/trades")
+    apiCall("/api/trades")
       .then((r) => r.json())
       .then((data) => setTrades(data))
       .catch(console.error)
       .finally(() => setTradeLoading(false));
 
-    Promise.all([fetch("/api/assets"), fetch("/api/assets/themes")])
+    Promise.all([apiCall("/api/assets"), apiCall("/api/assets/themes")])
       .then(async ([aRes, tRes]) => {
         if (aRes.ok) setAssets(await aRes.json());
         if (tRes.ok) setThemes(await tRes.json());
@@ -119,7 +120,7 @@ function PortfolioContent() {
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this trade?")) return;
     try {
-      const res = await fetch(`/api/trades/${id}`, { method: "DELETE" });
+      const res = await apiCall(`/api/trades/${id}`, { method: "DELETE" });
       if (res.ok) setTrades(trades.filter((t) => t.id !== id));
       else toast.error("Failed to delete trade");
     } catch { toast.error("Error deleting trade"); }
@@ -129,7 +130,7 @@ function PortfolioContent() {
     e.preventDefault();
     if (!editingTrade) return;
     try {
-      const res = await fetch(`/api/trades/${editingTrade.id}`, {
+      const res = await apiCall(`/api/trades/${editingTrade.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...editingTrade, price: Number(editingTrade.price), quantity: Number(editingTrade.quantity) }),
@@ -395,7 +396,7 @@ function PortfolioContent() {
                                 e.stopPropagation();
                                 if (!confirm(`Remove "${asset.ticker}" from asset list?\n\nTrade history will be preserved.`)) return;
                                 try {
-                                  const res = await fetch(`/api/assets/${asset.ticker}`, { method: "DELETE" });
+                                  const res = await apiCall(`/api/assets/${asset.ticker}`, { method: "DELETE" });
                                   if (res.ok) setAssets(assets.filter(a => a.ticker !== asset.ticker));
                                   else toast.error("Failed to remove asset.");
                                 } catch { toast.error("Error removing asset."); }

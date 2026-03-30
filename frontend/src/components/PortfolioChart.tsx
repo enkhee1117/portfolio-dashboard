@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { PortfolioHistoryPoint } from "../app/types";
+import { apiCall } from "../lib/api";
 import {
   AreaChart,
   Area,
@@ -26,7 +27,7 @@ export default function PortfolioChart() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/portfolio/history?period=${period}`)
+    apiCall(`/api/portfolio/history?period=${period}`)
       .then((r) => r.json())
       .then((d) => setData(d))
       .catch(console.error)

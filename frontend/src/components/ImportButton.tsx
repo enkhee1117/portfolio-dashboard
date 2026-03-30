@@ -1,6 +1,7 @@
 "use client";
 import { useState } from 'react';
 import { useToast } from './Toast';
+import { apiCall } from '../lib/api';
 
 const FileConfig = {
     accept: ".xlsx, .xls, .csv",
@@ -23,7 +24,7 @@ const ImportButton: React.FC<ImportButtonProps> = ({ onImportSuccess }) => {
         formData.append("file", e.target.files[0]);
 
         try {
-            const res = await fetch(FileConfig.endpoint, {
+            const res = await apiCall(FileConfig.endpoint, {
                 method: "POST",
                 body: formData,
             });

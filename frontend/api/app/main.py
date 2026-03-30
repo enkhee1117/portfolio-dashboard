@@ -546,16 +546,26 @@ def list_assets(db=Depends(get_db)):
 
 
 @app.get("/assets/themes")
-def list_themes(db=Depends(get_db)):
-    docs = db.collection('asset_prices').stream()
+def list_themes(db=Depends(get_db), user_id: str = Depends(get_current_user)):
     primary_set: set[str] = set()
     secondary_set: set[str] = set()
-    for doc in docs:
-        d = doc.to_dict()
-        if d.get('primary_theme'):
-            primary_set.add(d['primary_theme'])
-        if d.get('secondary_theme'):
-            secondary_set.add(d['secondary_theme'])
+
+    # Read from user's theme assignments if authenticated
+    if user_id != "anonymous":
+        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
+        for doc in docs:
+            d = doc.to_dict()
+            if d.get('primary'): primary_set.add(d['primary'])
+            if d.get('secondary'): secondary_set.add(d['secondary'])
+
+    # Fall back to shared asset_prices themes (backward compatible)
+    if not primary_set:
+        docs = db.collection('asset_prices').stream()
+        for doc in docs:
+            d = doc.to_dict()
+            if d.get('primary_theme'): primary_set.add(d['primary_theme'])
+            if d.get('secondary_theme'): secondary_set.add(d['secondary_theme'])
+
     return {
         "primary": sorted(primary_set),
         "secondary": sorted(secondary_set),
@@ -663,19 +673,28 @@ def delete_asset(ticker: str, db=Depends(get_db)):
 # ── Theme Management ─────────────────────────────────────────────────
 
 @app.get("/themes/summary")
-def themes_summary(db=Depends(get_db)):
+def themes_summary(db=Depends(get_db), user_id: str = Depends(get_current_user)):
     """Return all themes with asset counts."""
     primary: dict[str, int] = {}
     secondary: dict[str, int] = {}
-    docs = db.collection('asset_prices').stream()
-    for doc in docs:
-        d = doc.to_dict()
-        pt = d.get('primary_theme')
-        st = d.get('secondary_theme')
-        if pt:
-            primary[pt] = primary.get(pt, 0) + 1
-        if st:
-            secondary[st] = secondary.get(st, 0) + 1
+
+    # User-scoped themes if authenticated
+    if user_id != "anonymous":
+        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
+        for doc in docs:
+            d = doc.to_dict()
+            pt = d.get('primary')
+            st = d.get('secondary')
+            if pt: primary[pt] = primary.get(pt, 0) + 1
+            if st: secondary[st] = secondary.get(st, 0) + 1
+    else:
+        docs = db.collection('asset_prices').stream()
+        for doc in docs:
+            d = doc.to_dict()
+            pt = d.get('primary_theme')
+            st = d.get('secondary_theme')
+            if pt: primary[pt] = primary.get(pt, 0) + 1
+            if st: secondary[st] = secondary.get(st, 0) + 1
     return {
         "primary": sorted([{"name": k, "count": v} for k, v in primary.items()], key=lambda x: -x["count"]),
         "secondary": sorted([{"name": k, "count": v} for k, v in secondary.items()], key=lambda x: -x["count"]),
@@ -683,8 +702,8 @@ def themes_summary(db=Depends(get_db)):
 
 
 @app.put("/themes/rename")
-def rename_theme(body: dict, db=Depends(get_db)):
-    """Rename a theme across all assets. Body: {old_name, new_name, field: primary|secondary|both}"""
+def rename_theme(body: dict, db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Rename a theme across user's assets."""
     old_name = body.get("old_name", "").strip()
     new_name = body.get("new_name", "").strip()
     field = body.get("field", "both")
@@ -694,20 +713,27 @@ def rename_theme(body: dict, db=Depends(get_db)):
     if old_name == new_name:
         return {"message": "Names are the same.", "updated": 0}
 
-    docs = db.collection('asset_prices').stream()
+    # User-scoped theme docs
+    if user_id != "anonymous":
+        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
+    else:
+        docs = db.collection('asset_prices').stream()
+
     batch = db.batch()
     batch_count = 0
     updated = 0
+    is_user_scoped = user_id != "anonymous"
 
     for doc in docs:
         d = doc.to_dict()
         changes = {}
-        if field in ("primary", "both") and d.get('primary_theme') == old_name:
-            changes['primary_theme'] = new_name
-        if field in ("secondary", "both") and d.get('secondary_theme') == old_name:
-            changes['secondary_theme'] = new_name
+        p_key = 'primary' if is_user_scoped else 'primary_theme'
+        s_key = 'secondary' if is_user_scoped else 'secondary_theme'
+        if field in ("primary", "both") and d.get(p_key) == old_name:
+            changes[p_key] = new_name
+        if field in ("secondary", "both") and d.get(s_key) == old_name:
+            changes[s_key] = new_name
         if changes:
-            changes['last_updated'] = datetime.utcnow()
             batch.update(doc.reference, changes)
             batch_count += 1
             updated += 1
@@ -723,8 +749,8 @@ def rename_theme(body: dict, db=Depends(get_db)):
 
 
 @app.post("/themes/combine")
-def combine_themes(body: dict, db=Depends(get_db)):
-    """Merge source theme into target. Body: {source, target, field: primary|secondary|both}"""
+def combine_themes(body: dict, db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Merge source theme into target."""
     source = body.get("source", "").strip()
     target = body.get("target", "").strip()
     field = body.get("field", "both")
@@ -734,7 +760,12 @@ def combine_themes(body: dict, db=Depends(get_db)):
     if source == target:
         return {"message": "Source and target are the same.", "updated": 0}
 
-    docs = db.collection('asset_prices').stream()
+    is_user_scoped = user_id != "anonymous"
+    if is_user_scoped:
+        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
+    else:
+        docs = db.collection('asset_prices').stream()
+
     batch = db.batch()
     batch_count = 0
     updated = 0
@@ -742,12 +773,13 @@ def combine_themes(body: dict, db=Depends(get_db)):
     for doc in docs:
         d = doc.to_dict()
         changes = {}
-        if field in ("primary", "both") and d.get('primary_theme') == source:
-            changes['primary_theme'] = target
-        if field in ("secondary", "both") and d.get('secondary_theme') == source:
-            changes['secondary_theme'] = target
+        p_key = 'primary' if is_user_scoped else 'primary_theme'
+        s_key = 'secondary' if is_user_scoped else 'secondary_theme'
+        if field in ("primary", "both") and d.get(p_key) == source:
+            changes[p_key] = target
+        if field in ("secondary", "both") and d.get(s_key) == source:
+            changes[s_key] = target
         if changes:
-            changes['last_updated'] = datetime.utcnow()
             batch.update(doc.reference, changes)
             batch_count += 1
             updated += 1
@@ -763,9 +795,14 @@ def combine_themes(body: dict, db=Depends(get_db)):
 
 
 @app.delete("/themes/{name}")
-def delete_theme(name: str, field: str = "both", db=Depends(get_db)):
-    """Remove a theme from all assets (sets to empty string)."""
-    docs = db.collection('asset_prices').stream()
+def delete_theme(name: str, field: str = "both", db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Remove a theme from user's assets."""
+    is_user_scoped = user_id != "anonymous"
+    if is_user_scoped:
+        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
+    else:
+        docs = db.collection('asset_prices').stream()
+
     batch = db.batch()
     batch_count = 0
     updated = 0
@@ -773,12 +810,13 @@ def delete_theme(name: str, field: str = "both", db=Depends(get_db)):
     for doc in docs:
         d = doc.to_dict()
         changes = {}
-        if field in ("primary", "both") and d.get('primary_theme') == name:
-            changes['primary_theme'] = ""
-        if field in ("secondary", "both") and d.get('secondary_theme') == name:
-            changes['secondary_theme'] = ""
+        p_key = 'primary' if is_user_scoped else 'primary_theme'
+        s_key = 'secondary' if is_user_scoped else 'secondary_theme'
+        if field in ("primary", "both") and d.get(p_key) == name:
+            changes[p_key] = ""
+        if field in ("secondary", "both") and d.get(s_key) == name:
+            changes[s_key] = ""
         if changes:
-            changes['last_updated'] = datetime.utcnow()
             batch.update(doc.reference, changes)
             batch_count += 1
             updated += 1

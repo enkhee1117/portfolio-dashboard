@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { PortfolioSnapshot, ThemeBasketSeries } from "../types";
+import { apiCall } from "../../lib/api";
 import {
   BarChart,
   Bar,
@@ -40,7 +41,7 @@ export default function AnalyticsPage() {
   const [basketLoading, setBasketLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/portfolio")
+    apiCall("/api/portfolio")
       .then((r) => r.json())
       .then((data) => setPositions(data))
       .catch(console.error)
@@ -49,7 +50,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     setBasketLoading(true);
-    fetch(`/api/analytics/theme-baskets?period=${basketPeriod}`)
+    apiCall(`/api/analytics/theme-baskets?period=${basketPeriod}`)
       .then((r) => r.json())
       .then((data) => setBaskets(data.themes || []))
       .catch(console.error)

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import ImportButton from "../../components/ImportButton";
 import { useToast } from "../../components/Toast";
+import { apiCall } from "../../lib/api";
 
 export default function SettingsPage() {
   const toast = useToast();
@@ -14,7 +15,7 @@ export default function SettingsPage() {
 
   const fetchRefreshStatus = async () => {
     try {
-      const res = await fetch("/api/assets/refresh-status");
+      const res = await apiCall("/api/assets/refresh-status");
       if (res.ok) {
         const data = await res.json();
         setLastRefresh(data.last_refresh);
@@ -71,7 +72,7 @@ export default function SettingsPage() {
 
   const fetchThemeSummary = async () => {
     try {
-      const res = await fetch("/api/themes/summary");
+      const res = await apiCall("/api/themes/summary");
       if (res.ok) setThemeSummary(await res.json());
     } catch {}
   };
@@ -80,7 +81,7 @@ export default function SettingsPage() {
 
   const handleRenameTheme = async () => {
     if (!renamingTheme || !renameValue.trim()) return;
-    const res = await fetch("/api/themes/rename", {
+    const res = await apiCall("/api/themes/rename", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ old_name: renamingTheme.name, new_name: renameValue.trim(), field: renamingTheme.field }),
@@ -96,7 +97,7 @@ export default function SettingsPage() {
 
   const handleDeleteTheme = async (name: string, field: string) => {
     if (!confirm(`Remove "${name}" from all assets? Affected assets will show as "Unassigned".`)) return;
-    const res = await fetch(`/api/themes/${encodeURIComponent(name)}?field=${field}`, { method: "DELETE" });
+    const res = await apiCall(`/api/themes/${encodeURIComponent(name)}?field=${field}`, { method: "DELETE" });
     if (res.ok) {
       const data = await res.json();
       toast.success(data.message);
@@ -108,7 +109,7 @@ export default function SettingsPage() {
     if (!combineMode || !combineSource || !combineTarget) return;
     if (combineSource === combineTarget) { toast.error("Source and target are the same."); return; }
     if (!confirm(`Merge "${combineSource}" into "${combineTarget}"? All assets with "${combineSource}" will be reassigned.`)) return;
-    const res = await fetch("/api/themes/combine", {
+    const res = await apiCall("/api/themes/combine", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source: combineSource, target: combineTarget, field: combineMode.field }),
@@ -132,7 +133,7 @@ export default function SettingsPage() {
     setBackfilling(true);
     setBackfillResult(null);
     try {
-      const res = await fetch("/api/portfolio/backfill-history", { method: "POST" });
+      const res = await apiCall("/api/portfolio/backfill-history", { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         setBackfillResult(data.message);
@@ -151,7 +152,7 @@ export default function SettingsPage() {
     setRefreshing(true);
     setRefreshResult(null);
     try {
-      const res = await fetch("/api/assets/refresh-prices", { method: "POST" });
+      const res = await apiCall("/api/assets/refresh-prices", { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         setRefreshResult(data);
@@ -169,7 +170,7 @@ export default function SettingsPage() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const res = await fetch("/api/backup/export");
+      const res = await apiCall("/api/backup/export");
       if (res.ok) {
         const data = await res.json();
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -194,7 +195,7 @@ export default function SettingsPage() {
   const handleExportCsv = async () => {
     setExportingCsv(true);
     try {
-      const res = await fetch("/api/trades/export-csv");
+      const res = await apiCall("/api/trades/export-csv");
       if (res.ok) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -231,7 +232,7 @@ export default function SettingsPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/backup/restore", {
+      const res = await apiCall("/api/backup/restore", {
         method: "POST",
         body: formData,
       });
@@ -576,7 +577,7 @@ export default function SettingsPage() {
                           onClick={async () => {
                             if (!confirm(`Remove "${ticker}" from asset list?\n\nTrade history will be preserved for tax purposes.`)) return;
                             try {
-                              const res = await fetch(`/api/assets/${ticker}`, { method: "DELETE" });
+                              const res = await apiCall(`/api/assets/${ticker}`, { method: "DELETE" });
                               if (res.ok) {
                                 setRefreshResult({
                                   ...refreshResult,
@@ -597,7 +598,7 @@ export default function SettingsPage() {
                     onClick={async () => {
                       if (!confirm(`Remove all ${refreshResult.failed.length} failed tickers from asset list?\n\nTrade history will be preserved.`)) return;
                       for (const ticker of refreshResult.failed) {
-                        try { await fetch(`/api/assets/${ticker}`, { method: "DELETE" }); } catch {}
+                        try { await apiCall(`/api/assets/${ticker}`, { method: "DELETE" }); } catch {}
                       }
                       setRefreshResult({ ...refreshResult, failed: [] });
                     }}
