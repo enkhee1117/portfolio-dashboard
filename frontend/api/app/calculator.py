@@ -5,8 +5,12 @@ import logging
 
 logger = logging.getLogger("portfolio")
 
-def calculate_portfolio(db):
-    trades_docs = db.collection('trades').stream()
+def calculate_portfolio(db, user_id: str = "anonymous"):
+    from google.cloud.firestore_v1.base_query import FieldFilter
+    query = db.collection('trades')
+    if user_id != "anonymous":
+        query = query.where(filter=FieldFilter('user_id', '==', user_id))
+    trades_docs = query.stream()
     trades = []
     for doc in trades_docs:
         d = doc.to_dict()
@@ -93,7 +97,7 @@ def calculate_portfolio(db):
     return results
 
 
-def compute_and_store_snapshot(db, date_str: str | None = None):
+def compute_and_store_snapshot(db, date_str: str | None = None, user_id: str = "anonymous"):
     """
     Compute portfolio value and store as a daily snapshot.
     If date_str is None, uses today's date.
@@ -102,7 +106,7 @@ def compute_and_store_snapshot(db, date_str: str | None = None):
     if date_str is None:
         date_str = datetime.utcnow().strftime('%Y-%m-%d')
 
-    positions = calculate_portfolio(db)
+    positions = calculate_portfolio(db, user_id=user_id)
     total_value = sum(p["market_value"] for p in positions)
 
     # Strip datetime objects for Firestore storage — keep only serializable fields
@@ -128,13 +132,17 @@ def compute_and_store_snapshot(db, date_str: str | None = None):
         "computed_at": datetime.utcnow(),
     }
 
-    db.collection('portfolio_snapshots').document(date_str).set(snapshot)
-    logger.info(f"Snapshot stored for {date_str}: ${total_value:,.2f} ({len(positions_data)} positions)")
+    # Store in user-scoped path if authenticated, otherwise global
+    if user_id != "anonymous":
+        db.collection('users').document(user_id).collection('portfolio_snapshots').document(date_str).set(snapshot)
+    else:
+        db.collection('portfolio_snapshots').document(date_str).set(snapshot)
+    logger.info(f"Snapshot stored for {date_str} (user={user_id[:8]}...): ${total_value:,.2f} ({len(positions_data)} positions)")
 
     return snapshot
 
 
-def get_cached_portfolio(db):
+def get_cached_portfolio(db, user_id: str = "anonymous"):
     """
     Read today's snapshot if it exists and has positions.
     Otherwise compute fresh (and try to store).
@@ -145,7 +153,10 @@ def get_cached_portfolio(db):
     REQUIRED_FIELDS = {"ticker", "quantity", "realized_pnl", "realized_pnl_ytd"}
 
     try:
-        doc = db.collection('portfolio_snapshots').document(today).get()
+        if user_id != "anonymous":
+            doc = db.collection('users').document(user_id).collection('portfolio_snapshots').document(today).get()
+        else:
+            doc = db.collection('portfolio_snapshots').document(today).get()
         if doc.exists:
             d = doc.to_dict()
             positions = d.get('positions', [])
@@ -161,11 +172,11 @@ def get_cached_portfolio(db):
         pass
 
     # No valid snapshot — compute fresh
-    positions = calculate_portfolio(db)
+    positions = calculate_portfolio(db, user_id=user_id)
 
     # Try to store snapshot (best-effort, don't fail if it errors)
     try:
-        compute_and_store_snapshot(db, today)
+        compute_and_store_snapshot(db, today, user_id=user_id)
     except Exception:
         pass
 

@@ -3,7 +3,7 @@ from . import schemas
 from datetime import datetime
 from google.cloud import firestore
 
-def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False):
+def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False, user_id: str = "anonymous"):
     def clean_currency(val):
         if pd.isna(val) or val == '':
             return 0.0
@@ -79,6 +79,7 @@ def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False):
                             
                             doc_ref = db.collection('trades').document()
                             t_dict = trade_obj.model_dump()
+                            t_dict['user_id'] = user_id
                             batch.set(doc_ref, t_dict)
                             
                             # build list for wash sales

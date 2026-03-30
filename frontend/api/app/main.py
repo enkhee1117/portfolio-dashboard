@@ -384,13 +384,13 @@ def read_root():
     return {"message": "Portfolio Tracker API (Firebase Edition)"}
 
 @app.post("/import")
-async def import_excel(file: UploadFile = File(...), skip_dedup: bool = False, db = Depends(get_db)):
+async def import_excel(file: UploadFile = File(...), skip_dedup: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
     file_location = f"temp_{file.filename}"
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(file.file, file_object)
 
     try:
-        result = importer.import_data(db, file_location, skip_dedup=skip_dedup)
+        result = importer.import_data(db, file_location, skip_dedup=skip_dedup, user_id=user_id)
         count = result.get("added", 0) if result else 0
     finally:
         if os.path.exists(file_location):
@@ -399,8 +399,8 @@ async def import_excel(file: UploadFile = File(...), skip_dedup: bool = False, d
     return {"message": f"Import successful. Added {count} new trades."}
 
 @app.get("/portfolio", response_model=list[schemas.PortfolioSnapshot])
-def get_portfolio(db = Depends(get_db)):
-    data = calculator.get_cached_portfolio(db)
+def get_portfolio(db = Depends(get_db), user_id: str = Depends(get_current_user)):
+    data = calculator.get_cached_portfolio(db, user_id=user_id)
     portfolios = []
     for i, item in enumerate(data):
         item['id'] = str(i)
@@ -418,34 +418,41 @@ def parse_firestore_doc(doc) -> schemas.Trade:
     return schemas.Trade(**d)
 
 @app.get("/trades", response_model=list[schemas.Trade])
-def get_trades(db = Depends(get_db)):
-    docs = db.collection('trades').stream()
+def get_trades(db = Depends(get_db), user_id: str = Depends(get_current_user)):
+    query = db.collection('trades')
+    if user_id != "anonymous":
+        query = query.where(filter=FieldFilter('user_id', '==', user_id))
+    docs = query.stream()
     result = [parse_firestore_doc(d) for d in docs]
     result.sort(key=lambda x: x.date, reverse=True)
     return result
 
 @app.post("/trades/manual", response_model=schemas.Trade)
-def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(get_db)):
+def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
     if not force:
-        trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker)).stream()
-        for doc in trades_docs:
+        query = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker))
+        if user_id != "anonymous":
+            query = query.where(filter=FieldFilter('user_id', '==', user_id))
+        for doc in query.stream():
             d = doc.to_dict()
             if d.get('side') == trade.side and d.get('price') == trade.price and d.get('quantity') == trade.quantity:
                 raise HTTPException(status_code=409, detail="Duplicate trade detected.")
-                
+
     trade_data = trade.model_dump()
+    trade_data['user_id'] = user_id
     doc_ref = db.collection('trades').document()
     doc_ref.set(trade_data)
-    
-    trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker)).stream()
-    all_trades = [parse_firestore_doc(d) for d in trades_docs]
-        
+
+    trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker))
+    if user_id != "anonymous":
+        trades_docs = trades_docs.where(filter=FieldFilter('user_id', '==', user_id))
+    all_trades = [parse_firestore_doc(d) for d in trades_docs.stream()]
+
     from . import wash_sales
     wash_sales.detect_wash_sales(all_trades, db)
 
-    # Recompute today's snapshot
     try:
-        calculator.compute_and_store_snapshot(db)
+        calculator.compute_and_store_snapshot(db, user_id=user_id)
     except Exception:
         pass
 
@@ -453,53 +460,67 @@ def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(g
     return schemas.Trade(**trade_data)
 
 @app.delete("/trades/{trade_id}")
-def delete_trade(trade_id: str, db = Depends(get_db)):
+def delete_trade(trade_id: str, db = Depends(get_db), user_id: str = Depends(get_current_user)):
     doc_ref = db.collection('trades').document(trade_id)
     doc = doc_ref.get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Trade not found")
-        
-    ticker = doc.to_dict().get('ticker')
+
+    # Verify ownership
+    trade_data = doc.to_dict()
+    if user_id != "anonymous" and trade_data.get('user_id') and trade_data['user_id'] != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this trade")
+
+    ticker = trade_data.get('ticker')
     doc_ref.delete()
-    
-    trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker)).stream()
-    all_trades = [parse_firestore_doc(d) for d in trades_docs]
-        
+
+    query = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker))
+    if user_id != "anonymous":
+        query = query.where(filter=FieldFilter('user_id', '==', user_id))
+    all_trades = [parse_firestore_doc(d) for d in query.stream()]
+
     from . import wash_sales
     wash_sales.detect_wash_sales(all_trades, db)
 
     try:
-        calculator.compute_and_store_snapshot(db)
+        calculator.compute_and_store_snapshot(db, user_id=user_id)
     except Exception:
         pass
 
     return {"message": "Trade deleted successfully"}
 
 @app.put("/trades/{trade_id}", response_model=schemas.Trade)
-def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)):
+def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db), user_id: str = Depends(get_current_user)):
     doc_ref = db.collection('trades').document(trade_id)
     doc = doc_ref.get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Trade not found")
-        
-    old_ticker = doc.to_dict().get('ticker')
+
+    existing = doc.to_dict()
+    if user_id != "anonymous" and existing.get('user_id') and existing['user_id'] != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this trade")
+
+    old_ticker = existing.get('ticker')
     trade_data = trade.model_dump()
+    trade_data['user_id'] = user_id
     doc_ref.update(trade_data)
-    
+
     from . import wash_sales
 
     def re_run_ticker(ticker_name):
-        tdocs = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker_name)).stream()
-        trlist = [parse_firestore_doc(d) for d in tdocs]
+        query = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker_name))
+        if user_id != "anonymous":
+            query = query.where(filter=FieldFilter('user_id', '==', user_id))
+        trlist = [parse_firestore_doc(d) for d in query.stream()]
         wash_sales.detect_wash_sales(trlist, db)
 
     if old_ticker and old_ticker != trade.ticker:
         re_run_ticker(old_ticker)
-        
+
     re_run_ticker(trade.ticker)
 
     try:
-        calculator.compute_and_store_snapshot(db)
+        calculator.compute_and_store_snapshot(db, user_id=user_id)
     except Exception:
         pass
 
@@ -1044,7 +1065,7 @@ def backfill_history(db=Depends(get_db)):
 
 
 @app.get("/portfolio/history")
-def portfolio_history(period: str = "1y", db=Depends(get_db)):
+def portfolio_history(period: str = "1y", db=Depends(get_db), user_id: str = Depends(get_current_user)):
     """Read precomputed portfolio snapshots for the chart."""
     from datetime import timedelta
 
@@ -1062,8 +1083,11 @@ def portfolio_history(period: str = "1y", db=Depends(get_db)):
         delta = period_map.get(period, timedelta(days=365))
         start_str = (now - delta).strftime('%Y-%m-%d')
 
-    # Read from portfolio_snapshots collection — sorted by date
-    docs = db.collection('portfolio_snapshots').stream()
+    # Read from user-scoped or global snapshots
+    if user_id != "anonymous":
+        docs = db.collection('users').document(user_id).collection('portfolio_snapshots').stream()
+    else:
+        docs = db.collection('portfolio_snapshots').stream()
     result = []
     for doc in docs:
         d = doc.to_dict()

@@ -11,6 +11,7 @@ class TradeBase(BaseModel):
     quantity: float
     fees: float = 0.0
     currency: str = "USD"
+    user_id: Optional[str] = None
     
     expiration_date: Optional[datetime] = None
     strike_price: Optional[float] = None
