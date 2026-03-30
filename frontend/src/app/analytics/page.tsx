@@ -42,8 +42,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     apiCall("/api/portfolio")
-      .then((r) => r.json())
-      .then((data) => setPositions(data))
+      .then(async (r) => { if (r.ok) setPositions(await r.json()); })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -51,8 +50,8 @@ export default function AnalyticsPage() {
   useEffect(() => {
     setBasketLoading(true);
     apiCall(`/api/analytics/theme-baskets?period=${basketPeriod}`)
-      .then((r) => r.json())
-      .then((data) => setBaskets(data.themes || []))
+      .then(async (r) => { if (r.ok) { const data = await r.json(); setBaskets(data.themes || []); } })
+
       .catch(console.error)
       .finally(() => setBasketLoading(false));
   }, [basketPeriod]);

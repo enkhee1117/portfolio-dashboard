@@ -28,8 +28,11 @@ export default function PortfolioChart() {
   useEffect(() => {
     setLoading(true);
     apiCall(`/api/portfolio/history?period=${period}`)
-      .then((r) => r.json())
-      .then((d) => setData(d))
+      .then(async (r) => {
+        if (!r.ok) { setData([]); return; }
+        const d = await r.json();
+        setData(Array.isArray(d) ? d : []);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [period]);

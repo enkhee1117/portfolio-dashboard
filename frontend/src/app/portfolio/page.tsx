@@ -66,14 +66,12 @@ function PortfolioContent() {
 
   useEffect(() => {
     apiCall("/api/portfolio")
-      .then((r) => r.json())
-      .then((data) => setPositions(data))
+      .then(async (r) => { if (r.ok) setPositions(await r.json()); })
       .catch(console.error)
       .finally(() => setPosLoading(false));
 
     apiCall("/api/trades")
-      .then((r) => r.json())
-      .then((data) => setTrades(data))
+      .then(async (r) => { if (r.ok) setTrades(await r.json()); })
       .catch(console.error)
       .finally(() => setTradeLoading(false));
 

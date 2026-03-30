@@ -39,7 +39,7 @@ export default function Home() {
         const data = await res.json();
         setPositions(data);
       } else {
-        console.error('Failed to fetch portfolio');
+        console.warn('Failed to fetch portfolio');
       }
     } catch (error) {
       console.error('Error fetching portfolio:', error);
@@ -50,7 +50,7 @@ export default function Home() {
 
   useEffect(() => {
     fetchPortfolio();
-    apiCall("/api/assets").then(r => r.json()).then(setAssets).catch(console.error);
+    apiCall("/api/assets").then(async r => { if (r.ok) setAssets(await r.json()); }).catch(console.error);
   }, []);
 
   const totalMarketValue = positions.reduce((acc, pos) => acc + pos.market_value, 0);
