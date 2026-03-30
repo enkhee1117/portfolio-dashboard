@@ -530,23 +530,6 @@ def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(g
         if not shared_ref.get().exists:
             shared_ref.set({'ticker': ticker_upper, 'price': 0.0, 'last_updated': datetime.utcnow()})
 
-    # Run wash sale detection and snapshot recompute in background
-    # so the API responds immediately
-    import threading
-    def _post_trade_tasks():
-        try:
-            _db = get_db()
-            trades_docs = _db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker))
-            if user_id != "anonymous":
-                trades_docs = trades_docs.where(filter=FieldFilter('user_id', '==', user_id))
-            all_trades = [parse_firestore_doc(d) for d in trades_docs.stream()]
-            from . import wash_sales
-            wash_sales.detect_wash_sales(all_trades, _db)
-            calculator.compute_and_store_snapshot(_db, user_id=user_id)
-        except Exception as e:
-            logger.error(f"Post-trade background task error: {e}")
-    threading.Thread(target=_post_trade_tasks, daemon=True).start()
-
     trade_data['id'] = doc_ref.id
     return schemas.Trade(**trade_data)
 
@@ -565,22 +548,6 @@ def delete_trade(trade_id: str, db = Depends(get_db), user_id: str = Depends(get
     ticker = trade_data.get('ticker')
     doc_ref.delete()
 
-    # Run wash sale detection and snapshot recompute in background
-    import threading
-    def _post_delete_tasks():
-        try:
-            _db = get_db()
-            query = _db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker))
-            if user_id != "anonymous":
-                query = query.where(filter=FieldFilter('user_id', '==', user_id))
-            all_trades = [parse_firestore_doc(d) for d in query.stream()]
-            from . import wash_sales
-            wash_sales.detect_wash_sales(all_trades, _db)
-            calculator.compute_and_store_snapshot(_db, user_id=user_id)
-        except Exception as e:
-            logger.error(f"Post-delete background task error: {e}")
-    threading.Thread(target=_post_delete_tasks, daemon=True).start()
-
     return {"message": "Trade deleted successfully"}
 
 @app.put("/trades/{trade_id}", response_model=schemas.Trade)
@@ -595,30 +562,9 @@ def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)
     if user_id != "anonymous" and existing.get('user_id') and existing['user_id'] != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to update this trade")
 
-    old_ticker = existing.get('ticker')
     trade_data = trade.model_dump()
     trade_data['user_id'] = user_id
     doc_ref.update(trade_data)
-
-    # Run wash sale detection and snapshot recompute in background
-    import threading
-    def _post_update_tasks():
-        try:
-            _db = get_db()
-            from . import wash_sales
-            def re_run_ticker(ticker_name):
-                query = _db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker_name))
-                if user_id != "anonymous":
-                    query = query.where(filter=FieldFilter('user_id', '==', user_id))
-                trlist = [parse_firestore_doc(d) for d in query.stream()]
-                wash_sales.detect_wash_sales(trlist, _db)
-            if old_ticker and old_ticker != trade.ticker:
-                re_run_ticker(old_ticker)
-            re_run_ticker(trade.ticker)
-            calculator.compute_and_store_snapshot(_db, user_id=user_id)
-        except Exception as e:
-            logger.error(f"Post-update background task error: {e}")
-    threading.Thread(target=_post_update_tasks, daemon=True).start()
 
     trade_data['id'] = trade_id
     if hasattr(trade_data['date'], 'replace'):
@@ -984,6 +930,46 @@ def delete_theme(name: str, field: str = "both", db=Depends(get_db), user_id: st
         batch.commit()
 
     return {"message": f"Deleted theme '{name}'. {updated} assets updated.", "updated": updated}
+
+
+# ── On-Demand Recompute ───────────────────────────────────────────────
+
+@app.post("/portfolio/recompute")
+def recompute_portfolio(db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Manually recompute portfolio snapshot. Use after adding trades or when dashboard feels stale."""
+    snapshot = calculator.compute_and_store_snapshot(db, user_id=user_id)
+    return {
+        "message": f"Portfolio recomputed: {len(snapshot.get('positions', []))} positions, ${snapshot.get('total_value', 0):,.0f} total.",
+        "positions": len(snapshot.get("positions", [])),
+        "total_value": snapshot.get("total_value", 0),
+    }
+
+
+@app.post("/trades/recheck-wash-sales")
+def recheck_wash_sales(db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Rerun wash sale detection across all user's trades. Run after bulk imports or edits."""
+    from . import wash_sales
+
+    # Group trades by ticker
+    all_docs = db.collection('trades').where(filter=FieldFilter('user_id', '==', user_id)).stream()
+    by_ticker: dict[str, list] = {}
+    for doc in all_docs:
+        d = doc.to_dict()
+        t = d.get('ticker', '')
+        if t not in by_ticker:
+            by_ticker[t] = []
+        by_ticker[t].append(parse_firestore_doc(doc))
+
+    total_flagged = 0
+    for ticker, trades in by_ticker.items():
+        flagged = wash_sales.detect_wash_sales(trades, db)
+        total_flagged += flagged if isinstance(flagged, int) else 0
+
+    return {
+        "message": f"Wash sale detection complete. Checked {sum(len(v) for v in by_ticker.values())} trades across {len(by_ticker)} tickers.",
+        "tickers_checked": len(by_ticker),
+        "trades_checked": sum(len(v) for v in by_ticker.values()),
+    }
 
 
 # ── Price Refresh (Yahoo Finance) ─────────────────────────────────────

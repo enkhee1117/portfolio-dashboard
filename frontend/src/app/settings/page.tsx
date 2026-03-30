@@ -384,6 +384,50 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Portfolio & Wash Sales Recompute */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+            <h3 className="text-lg font-semibold text-white">Recompute Portfolio</h3>
+            <p className="text-sm text-gray-400 mt-1 mb-3">
+              Recalculate all positions, P&amp;L, and market values. Run after adding trades or if the dashboard feels stale.
+            </p>
+            <button
+              onClick={async () => {
+                try {
+                  const res = await apiCall("/api/portfolio/recompute", { method: "POST" });
+                  if (res.ok) {
+                    const data = await res.json();
+                    toast.success(data.message);
+                  } else toast.error("Failed to recompute portfolio");
+                } catch { toast.error("Error recomputing portfolio"); }
+              }}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Recompute Now
+            </button>
+          </div>
+          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+            <h3 className="text-lg font-semibold text-white">Recheck Wash Sales</h3>
+            <p className="text-sm text-gray-400 mt-1 mb-3">
+              Rerun IRS wash sale detection across all trades. Run after bulk imports or trade edits.
+            </p>
+            <button
+              onClick={async () => {
+                try {
+                  const res = await apiCall("/api/trades/recheck-wash-sales", { method: "POST" });
+                  if (res.ok) {
+                    const data = await res.json();
+                    toast.success(data.message);
+                  } else toast.error("Failed to recheck wash sales");
+                } catch { toast.error("Error rechecking wash sales"); }
+              }}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Recheck Now
+            </button>
+          </div>
+        </div>
+
         {/* Theme Management */}
         <div id="themes" className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg scroll-mt-20">
           <h3 className="text-lg font-semibold text-white mb-1">Theme Management</h3>
