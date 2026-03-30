@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Header
 from fastapi.responses import JSONResponse
 from . import schemas, database, importer, calculator
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -8,8 +8,26 @@ import json
 import logging
 from datetime import datetime
 from contextlib import asynccontextmanager
+from typing import Optional
 
 logger = logging.getLogger("portfolio")
+
+
+# ── Authentication ────────────────────────────────────────────────────
+
+def get_current_user(authorization: Optional[str] = Header(None)) -> str:
+    """Extract user_id from Firebase ID token. Returns 'anonymous' if no token."""
+    if not authorization or not authorization.startswith("Bearer "):
+        # Allow unauthenticated access during migration period
+        return "anonymous"
+    try:
+        from firebase_admin import auth
+        token = authorization.replace("Bearer ", "")
+        decoded = auth.verify_id_token(token)
+        return decoded['uid']
+    except Exception as e:
+        logger.warning(f"Auth token verification failed: {e}")
+        return "anonymous"
 
 
 # ── Shared Price Fetching Utilities ───────────────────────────────────

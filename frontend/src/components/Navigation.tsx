@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "../lib/AuthContext";
+import { useEffect } from "react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard" },
@@ -11,6 +13,21 @@ const NAV_ITEMS = [
 
 export default function Navigation() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, loading, logout } = useAuth();
+
+  // Redirect to login if not authenticated (except on login page)
+  useEffect(() => {
+    if (!loading && !user && pathname !== "/login") {
+      router.push("/login");
+    }
+  }, [user, loading, pathname, router]);
+
+  // Don't show nav on login page
+  if (pathname === "/login") return null;
+
+  // Don't show nav while loading auth
+  if (loading) return null;
 
   return (
     <nav className="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
@@ -52,6 +69,21 @@ export default function Navigation() {
             );
           })}
         </div>
+
+        {/* User */}
+        {user && (
+          <div className="flex items-center gap-3 ml-auto shrink-0">
+            <span className="text-xs text-gray-400 hidden sm:block">
+              {user.email || user.displayName || "User"}
+            </span>
+            <button
+              onClick={async () => { await logout(); router.push("/login"); }}
+              className="px-3 py-1 text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 rounded transition-colors"
+            >
+              Logout
+            </button>
+          </div>
+        )}
       </div>
     </nav>
   );
