@@ -428,14 +428,16 @@ npx vitest            # watch mode
 ### Price refresh schedule
 | Job | When | What | Tickers | Cost |
 |---|---|---|---|---|
-| **Intraday** | Every 15 min, 10AM-4PM ET, weekdays | Fetch latest prices for active portfolio positions, update snapshot market values | ~93 active | ~2,400 writes/day |
-| **End-of-day** | 5:30 PM ET, weekdays | Full refresh all tickers, RSI recompute, full snapshot recompute for accuracy | All (~397) | ~2,500 reads + ~800 writes |
+| **On-demand intraday** | When user loads portfolio, if >15 min stale + market open | Fetch latest prices for active positions, update snapshot | ~93 active | Only when someone's using the app |
+| **End-of-day** | 5:30 PM ET, weekdays (scheduled) | Full refresh all tickers, RSI recompute, full snapshot recompute | All (~397) | ~2,500 reads + ~800 writes |
+
+**Stale-while-revalidate pattern:** `GET /portfolio` serves cached data immediately. If the snapshot is >15 min old and the market is open, a background thread fetches fresh prices and updates the snapshot. The next page load gets fresh data. No refresh happens if nobody is logged in.
 
 ### Portfolio update strategy
 | Trigger | Method | Cost | Latency |
 |---|---|---|---|
 | **Trade CRUD** | Delta: replay affected ticker only (~5 trades), update snapshot position | ~5-10 reads + 1 write | <500ms |
-| **Intraday refresh** | Update prices in cached snapshot for active tickers | ~93 writes | Background, 0 UX impact |
+| **Page load (stale)** | Background: fetch prices for active tickers, update snapshot | ~93 writes | Serves cached instantly, fresh on next load |
 | **End-of-day** | Full recompute from all trades + latest prices (corrects any drift) | ~2,500 reads + 1 write | Background, 0 UX impact |
 | **On-demand** | Settings → "Recompute Portfolio" button | ~2,500 reads + 1 write | User-triggered |
 
@@ -455,10 +457,10 @@ npx vitest            # watch mode
 ### Cost estimates
 | Scenario | Reads/day | Writes/day | Est. monthly cost |
 |---|---|---|---|
-| Intraday refresh (93 tickers, 26×/day) | 0 | ~2,400 | ~$1.50 |
+| Intraday refresh (on-demand, ~5 loads/day) | 0 | ~465 (93×5) | ~$0.30 |
 | End-of-day full refresh | ~2,500 | ~800 | ~$0.50 |
 | Trade CRUD (10 trades/day) | ~100 | ~10 | ~$0.01 |
-| **Total** | **~2,600** | **~3,210** | **~$2/month** |
+| **Total** | **~2,600** | **~1,275** | **~$1/month** |
 
 ### Future optimizations (not yet needed)
 - **Redis/in-memory cache** for `asset_prices` reads if Firestore costs become significant

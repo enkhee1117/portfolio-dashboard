@@ -520,19 +520,8 @@ async def lifespan(app):
                 id="daily_price_refresh",
                 replace_existing=True,
             )
-            # Intraday refresh: active portfolio tickers only, every 15 min during market hours
-            scheduler.add_job(
-                _intraday_price_refresh,
-                CronTrigger(
-                    hour="10-16", minute="*/15",
-                    day_of_week="mon-fri",
-                    timezone="US/Eastern",
-                ),
-                id="intraday_price_refresh",
-                replace_existing=True,
-            )
             scheduler.start()
-            logger.info("Schedulers started — intraday every 15min (10AM-4PM ET) + daily at 5:30 PM ET")
+            logger.info("Scheduler started — daily full refresh at 5:30 PM ET. Intraday: on-demand when user loads portfolio.")
         except Exception as e:
             logger.warning(f"Scheduler not started: {e}")
     else:
@@ -624,9 +613,52 @@ async def import_excel(file: UploadFile = File(...), skip_dedup: bool = False, d
 
     return {"message": f"Import successful. Added {count} new trades."}
 
+def _is_market_open() -> bool:
+    """Check if US stock market is likely open (weekday, 9:30 AM - 4 PM ET)."""
+    from datetime import timezone, timedelta
+    et = timezone(timedelta(hours=-4))  # EDT (approximate — close enough for staleness check)
+    now_et = datetime.now(et)
+    if now_et.weekday() >= 5:  # Weekend
+        return False
+    hour, minute = now_et.hour, now_et.minute
+    if hour < 9 or (hour == 9 and minute < 30) or hour >= 16:
+        return False
+    return True
+
+
+# Track in-flight refresh to avoid duplicate background refreshes
+_refresh_in_progress: set[str] = set()
+
+
 @app.get("/portfolio", response_model=list[schemas.PortfolioSnapshot])
 def get_portfolio(db = Depends(get_db), user_id: str = Depends(get_current_user)):
     data = calculator.get_cached_portfolio(db, user_id=user_id)
+
+    # Stale-while-revalidate: if prices are >15 min old and market is open,
+    # trigger a background refresh. Serve cached data immediately.
+    if _is_market_open() and user_id not in _refresh_in_progress:
+        try:
+            today = datetime.utcnow().strftime('%Y-%m-%d')
+            snap_ref = db.collection('users').document(user_id).collection('portfolio_snapshots').document(today)
+            snap = snap_ref.get()
+            if snap.exists:
+                computed_at = snap.to_dict().get('computed_at')
+                if computed_at:
+                    if hasattr(computed_at, 'replace'):
+                        computed_at = computed_at.replace(tzinfo=None)
+                    age_minutes = (datetime.utcnow() - computed_at).total_seconds() / 60
+                    if age_minutes > 15:
+                        import threading
+                        _refresh_in_progress.add(user_id)
+                        def _bg_refresh():
+                            try:
+                                _intraday_price_refresh()
+                            finally:
+                                _refresh_in_progress.discard(user_id)
+                        threading.Thread(target=_bg_refresh, daemon=True).start()
+        except Exception:
+            pass
+
     portfolios = []
     for i, item in enumerate(data):
         item['id'] = str(i)
@@ -1241,18 +1273,10 @@ def refresh_status(db=Depends(get_db)):
         if job.next_run_time:
             next_run = job.next_run_time.isoformat()
 
-    # Next intraday refresh
-    next_intraday = None
-    if scheduler and scheduler.get_job("intraday_price_refresh"):
-        job = scheduler.get_job("intraday_price_refresh")
-        if job.next_run_time:
-            next_intraday = job.next_run_time.isoformat()
-
     return {
         "last_refresh": (latest.isoformat() + "Z") if latest else None,
         "next_scheduled": next_run,
-        "next_intraday": next_intraday,
-        "schedule": "Active positions: every 15 min during market hours (10AM-4PM ET). Full refresh: 5:30 PM ET.",
+        "schedule": "Intraday: on-demand when you load the portfolio (if >15 min stale during market hours). Full refresh: 5:30 PM ET.",
     }
 
 
