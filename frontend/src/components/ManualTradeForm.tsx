@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { Asset, ThemeLists } from "../app/types";
 import { useToast } from "./Toast";
 import { apiCall } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 
 interface ManualTradeFormProps {
   onTradeAdded: () => void;
@@ -27,17 +28,19 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
   const [showRegister, setShowRegister] = useState(false);
   const [regForm, setRegForm] = useState({ primary_theme: "", secondary_theme: "", price: "" });
   const [regLoading, setRegLoading] = useState(false);
+  const { user } = useAuth();
   const toast = useToast();
 
-  // Fetch assets and themes on mount
+  // Fetch assets and themes when auth is ready
   useEffect(() => {
+    if (!user) return;
     Promise.all([apiCall("/api/assets"), apiCall("/api/assets/themes")])
       .then(async ([aRes, tRes]) => {
         if (aRes.ok) setAssets(await aRes.json());
         if (tRes.ok) setThemes(await tRes.json());
       })
       .catch(console.error);
-  }, []);
+  }, [user]);
 
   // Check ticker when it changes
   const checkTicker = (ticker: string) => {
