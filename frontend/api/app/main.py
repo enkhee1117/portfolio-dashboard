@@ -504,6 +504,8 @@ def get_trades(db = Depends(get_db), user_id: str = Depends(get_current_user)):
 
 @app.post("/trades/manual", response_model=schemas.Trade)
 def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
+    # Normalize ticker to uppercase
+    trade.ticker = trade.ticker.upper()
     if not force:
         query = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker))
         if user_id != "anonymous":
@@ -576,6 +578,7 @@ def delete_trade(trade_id: str, db = Depends(get_db), user_id: str = Depends(get
 
 @app.put("/trades/{trade_id}", response_model=schemas.Trade)
 def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db), user_id: str = Depends(get_current_user)):
+    trade.ticker = trade.ticker.upper()
     doc_ref = db.collection('trades').document(trade_id)
     doc = doc_ref.get()
     if not doc.exists:

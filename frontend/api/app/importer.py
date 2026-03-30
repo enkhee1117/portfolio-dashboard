@@ -52,7 +52,7 @@ def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False, 
                     col_price = ' Price ' if ' Price ' in df.columns else 'Price'
                     col_qty = 'Number of stocks' if 'Number of stocks' in df.columns else 'Quantity'
                     
-                    ticker = str(row.get(col_ticker)).strip()
+                    ticker = str(row.get(col_ticker)).strip().upper()
                     date_val = pd.to_datetime(row.get(col_date), errors='coerce')
                     price_val = clean_currency(row.get(col_price))
                     raw_qty = clean_currency(row.get(col_qty))
@@ -145,7 +145,7 @@ def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False, 
                 if pd.isna(row.get('Ticker')):
                     continue
                 try:
-                    ticker = str(row.get('Ticker')).strip()
+                    ticker = str(row.get('Ticker')).strip().upper()
                     price_val = clean_currency(row.get('Price'))
                     
                     p_theme = str(row.get('Primary theme', '')).strip() if 'Primary theme' in df.columns else None
