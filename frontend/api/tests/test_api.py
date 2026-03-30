@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime
 from fastapi.testclient import TestClient
-from app.main import app, get_db
+from app.main import app, get_db, get_current_user
 from app import schemas
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -90,6 +90,11 @@ def make_mock_db(trades=None, asset_prices=None):
 def mock_firebase(monkeypatch):
     """Patch firebase_admin so no real credentials are needed."""
     monkeypatch.setattr("firebase_admin._apps", {"default": True})
+    # Override auth to return a test user for all protected endpoints
+    app.dependency_overrides[get_current_user] = lambda: "test-user-123"
+    yield
+    if get_current_user in app.dependency_overrides:
+        del app.dependency_overrides[get_current_user]
 
 
 @pytest.fixture

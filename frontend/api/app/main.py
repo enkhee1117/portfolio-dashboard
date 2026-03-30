@@ -16,10 +16,9 @@ logger = logging.getLogger("portfolio")
 # ── Authentication ────────────────────────────────────────────────────
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> str:
-    """Extract user_id from Firebase ID token. Returns 'anonymous' if no token."""
+    """Extract user_id from Firebase ID token. Raises 401 if not authenticated."""
     if not authorization or not authorization.startswith("Bearer "):
-        # Allow unauthenticated access during migration period
-        return "anonymous"
+        raise HTTPException(status_code=401, detail="Authentication required")
     try:
         from firebase_admin import auth
         token = authorization.replace("Bearer ", "")
@@ -27,6 +26,19 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> str:
         return decoded['uid']
     except Exception as e:
         logger.warning(f"Auth token verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def get_optional_user(authorization: Optional[str] = Header(None)) -> str:
+    """Extract user_id if token present, otherwise return 'anonymous'. For shared endpoints."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return "anonymous"
+    try:
+        from firebase_admin import auth
+        token = authorization.replace("Bearer ", "")
+        decoded = auth.verify_id_token(token)
+        return decoded['uid']
+    except Exception:
         return "anonymous"
 
 

@@ -311,7 +311,8 @@ class TestPortfolioHistory:
     def test_reads_from_snapshots(self):
         """GET /portfolio/history should read from portfolio_snapshots, not replay trades."""
         from fastapi.testclient import TestClient
-        from app.main import app, get_db
+        from app.main import app, get_db, get_current_user
+        app.dependency_overrides[get_current_user] = lambda: "test-user-123"
 
         today = datetime.utcnow().strftime('%Y-%m-%d')
         snap1 = MagicMock()
@@ -323,7 +324,12 @@ class TestPortfolioHistory:
         snapshots_col = MagicMock()
         snapshots_col.stream.return_value = [snap1, snap2]
 
+        # Wire up users/{uid}/portfolio_snapshots path for authenticated user
+        users_col = MagicMock()
+        users_col.document.return_value.collection.return_value = snapshots_col
+
         def _col(name):
+            if name == "users": return users_col
             if name == "portfolio_snapshots": return snapshots_col
             return MagicMock()
 
@@ -344,7 +350,8 @@ class TestPortfolioHistory:
     def test_sorted_by_date(self):
         """Results should be sorted chronologically."""
         from fastapi.testclient import TestClient
-        from app.main import app, get_db
+        from app.main import app, get_db, get_current_user
+        app.dependency_overrides[get_current_user] = lambda: "test-user-123"
 
         # Insert out of order
         snap_b = MagicMock()

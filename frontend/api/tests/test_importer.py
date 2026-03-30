@@ -7,7 +7,7 @@ import pytest
 import os
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
-from app.main import app, get_db
+from app.main import app, get_db, get_current_user
 
 
 # ── CSV helper ────────────────────────────────────────────────────────────────
@@ -32,6 +32,10 @@ def create_temp_csv(filename, rows):
 @pytest.fixture(autouse=True)
 def mock_firebase(monkeypatch):
     monkeypatch.setattr("firebase_admin._apps", {"default": True})
+    app.dependency_overrides[get_current_user] = lambda: "test-user-123"
+    yield
+    if get_current_user in app.dependency_overrides:
+        del app.dependency_overrides[get_current_user]
 
 
 def make_import_db(existing_docs=None):
