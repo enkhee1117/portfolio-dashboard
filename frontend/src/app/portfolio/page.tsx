@@ -68,17 +68,13 @@ function PortfolioContent() {
 
   useEscape(detailTicker ? () => setDetailTicker(null) : editingTrade ? () => setEditingTrade(null) : null);
 
+  // Fetch positions + assets on mount (lightweight)
   useEffect(() => {
     if (!user) return;
     apiCall("/api/portfolio")
       .then(async (r) => { if (r.ok) setPositions(await r.json()); })
       .catch(console.error)
       .finally(() => setPosLoading(false));
-
-    apiCall("/api/trades")
-      .then(async (r) => { if (r.ok) setTrades(await r.json()); })
-      .catch(console.error)
-      .finally(() => setTradeLoading(false));
 
     Promise.all([apiCall("/api/assets"), apiCall("/api/assets/themes")])
       .then(async ([aRes, tRes]) => {
@@ -88,6 +84,17 @@ function PortfolioContent() {
       .catch(console.error)
       .finally(() => setAssetLoading(false));
   }, [user]);
+
+  // Lazy-load trades only when Trades tab is active (expensive — streams all trades)
+  useEffect(() => {
+    if (!user || tab !== "trades") return;
+    if (trades.length > 0) return; // Already loaded
+    setTradeLoading(true);
+    apiCall("/api/trades?limit=0")
+      .then(async (r) => { if (r.ok) setTrades(await r.json()); })
+      .catch(console.error)
+      .finally(() => setTradeLoading(false));
+  }, [user, tab]);
 
   const activeCount = positions.filter((p) => p.quantity > 0).length;
 

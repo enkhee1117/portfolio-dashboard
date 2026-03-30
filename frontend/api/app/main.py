@@ -493,13 +493,29 @@ def parse_firestore_doc(doc) -> schemas.Trade:
     return schemas.Trade(**d)
 
 @app.get("/trades", response_model=list[schemas.Trade])
-def get_trades(db = Depends(get_db), user_id: str = Depends(get_current_user)):
+def get_trades(
+    limit: int = 50,
+    offset: int = 0,
+    ticker: Optional[str] = None,
+    db = Depends(get_db),
+    user_id: str = Depends(get_current_user),
+):
+    """List trades with pagination. Pass limit=0 for all trades (export/backup use)."""
     query = db.collection('trades')
     if user_id != "anonymous":
         query = query.where(filter=FieldFilter('user_id', '==', user_id))
+    if ticker:
+        query = query.where(filter=FieldFilter('ticker', '==', ticker.upper()))
+
     docs = query.stream()
     result = [parse_firestore_doc(d) for d in docs]
     result.sort(key=lambda x: x.date, reverse=True)
+
+    # Paginate (Firestore doesn't support offset natively with compound filters,
+    # so we paginate in-memory after streaming)
+    total = len(result)
+    if limit > 0:
+        result = result[offset:offset + limit]
     return result
 
 @app.post("/trades/manual", response_model=schemas.Trade)
@@ -1286,7 +1302,7 @@ def portfolio_history(period: str = "1y", db=Depends(get_db), user_id: str = Dep
 # ── Theme Basket Comparison ───────────────────────────────────────────
 
 @app.get("/analytics/theme-baskets")
-def theme_baskets(period: str = "1y", db=Depends(get_db)):
+def theme_baskets(period: str = "1y", db=Depends(get_db), user_id: str = Depends(get_current_user)):
     """Compare theme basket performance. Each basket starts at $10,000."""
     from datetime import timedelta
     from collections import defaultdict
@@ -1306,27 +1322,27 @@ def theme_baskets(period: str = "1y", db=Depends(get_db)):
         start_str = (now - delta).strftime('%Y-%m-%d')
     INITIAL_VALUE = 10000.0
 
-    # Load assets grouped by primary theme
-    assets_docs = db.collection('asset_prices').stream()
+    # Load user's assets grouped by primary theme (user-scoped)
     theme_tickers: dict[str, list[str]] = defaultdict(list)
-    for doc in assets_docs:
+    for doc in db.collection('users').document(user_id).collection('asset_themes').stream():
         d = doc.to_dict()
-        theme = d.get('primary_theme')
-        ticker = d.get('ticker')
+        theme = d.get('primary')
+        ticker = doc.id
         if theme and ticker:
             theme_tickers[theme].append(ticker)
 
-    # Load price_series for all tickers
+    # Batch-read price_series for all tickers (one round trip)
     all_tickers = set()
     for tickers_list in theme_tickers.values():
         all_tickers.update(tickers_list)
 
     prices: dict[str, dict[str, float]] = {}  # ticker -> {date: close}
-    for ticker in all_tickers:
-        doc = db.collection('price_series').document(ticker).get()
-        if doc.exists:
-            d = doc.to_dict()
-            prices[ticker] = d.get('prices', {})
+    if all_tickers:
+        price_refs = [db.collection('price_series').document(t) for t in all_tickers]
+        for doc in db.get_all(price_refs):
+            if doc.exists:
+                d = doc.to_dict()
+                prices[doc.id] = d.get('prices', {})
 
     # Collect all available dates across all tickers within period
     all_dates = set()
