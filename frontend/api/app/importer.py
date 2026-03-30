@@ -3,6 +3,11 @@ from . import schemas
 from datetime import datetime
 from google.cloud import firestore
 
+
+def normalize_theme(name: str) -> str:
+    """Normalize theme names to Title Case for consistent grouping."""
+    return name.strip().title() if name else ""
+
 def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False, user_id: str = "anonymous"):
     def clean_currency(val):
         if pd.isna(val) or val == '':
@@ -169,8 +174,8 @@ def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False, 
                             theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
                             batch.set(theme_ref, {
                                 'ticker': ticker,
-                                'primary': p_theme or '',
-                                'secondary': s_theme or '',
+                                'primary': normalize_theme(p_theme) if p_theme else '',
+                                'secondary': normalize_theme(s_theme) if s_theme else '',
                             }, merge=True)
                             batch_count += 1
 

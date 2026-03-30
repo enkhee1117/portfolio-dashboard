@@ -52,6 +52,11 @@ def get_user_tickers(db, user_id: str) -> set[str]:
     return tickers
 
 
+def normalize_theme(name: str) -> str:
+    """Normalize theme names to Title Case for consistent grouping."""
+    return name.strip().title() if name else ""
+
+
 # ── Shared Price Fetching Utilities ───────────────────────────────────
 
 def fetch_and_store_ticker_prices(db, ticker: str, start: str = "2020-01-01"):
@@ -518,6 +523,19 @@ def get_trades(
         result = result[offset:offset + limit]
     return result
 
+def _invalidate_snapshot_cache(db, user_id: str):
+    """Delete today's cached snapshot so the next GET /portfolio triggers a fresh compute.
+    This is cheap (1 delete) vs full recompute (~2500 reads)."""
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    try:
+        if user_id != "anonymous":
+            db.collection('users').document(user_id).collection('portfolio_snapshots').document(today).delete()
+        else:
+            db.collection('portfolio_snapshots').document(today).delete()
+    except Exception:
+        pass
+
+
 @app.post("/trades/manual", response_model=schemas.Trade)
 def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
     # Normalize ticker to uppercase
@@ -546,6 +564,9 @@ def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(g
         if not shared_ref.get().exists:
             shared_ref.set({'ticker': ticker_upper, 'price': 0.0, 'last_updated': datetime.utcnow()})
 
+    # Invalidate cached snapshot so next portfolio view recomputes
+    _invalidate_snapshot_cache(db, user_id)
+
     trade_data['id'] = doc_ref.id
     return schemas.Trade(**trade_data)
 
@@ -563,6 +584,7 @@ def delete_trade(trade_id: str, db = Depends(get_db), user_id: str = Depends(get
 
     ticker = trade_data.get('ticker')
     doc_ref.delete()
+    _invalidate_snapshot_cache(db, user_id)
 
     return {"message": "Trade deleted successfully"}
 
@@ -581,6 +603,7 @@ def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)
     trade_data = trade.model_dump()
     trade_data['user_id'] = user_id
     doc_ref.update(trade_data)
+    _invalidate_snapshot_cache(db, user_id)
 
     trade_data['id'] = trade_id
     if hasattr(trade_data['date'], 'replace'):
@@ -667,11 +690,11 @@ def create_asset(asset: schemas.AssetCreate, db=Depends(get_db), user_id: str = 
             "last_updated": datetime.utcnow(),
         })
 
-    # Write themes to user-scoped collection
+    # Write themes to user-scoped collection (normalized to Title Case)
     user_theme_ref.set({
         "ticker": ticker,
-        "primary": asset.primary_theme,
-        "secondary": asset.secondary_theme,
+        "primary": normalize_theme(asset.primary_theme),
+        "secondary": normalize_theme(asset.secondary_theme),
     })
 
     # Auto-fetch historical prices for this new ticker (best-effort)
@@ -737,9 +760,9 @@ def update_asset(ticker: str, asset: schemas.AssetUpdate, db=Depends(get_db), us
         theme_data = old_theme_doc.to_dict() if old_theme_doc.exists else {}
         # Apply any theme updates from this request
         if asset.primary_theme is not None:
-            theme_data['primary'] = asset.primary_theme
+            theme_data['primary'] = normalize_theme(asset.primary_theme)
         if asset.secondary_theme is not None:
-            theme_data['secondary'] = asset.secondary_theme
+            theme_data['secondary'] = normalize_theme(asset.secondary_theme)
         theme_data['ticker'] = new_ticker
         db.collection('users').document(user_id).collection('asset_themes').document(new_ticker).set(theme_data)
         if old_theme_doc.exists:
@@ -774,9 +797,9 @@ def update_asset(ticker: str, asset: schemas.AssetUpdate, db=Depends(get_db), us
         # Theme update only — write to user's asset_themes
         theme_updates = {}
         if asset.primary_theme is not None:
-            theme_updates['primary'] = asset.primary_theme
+            theme_updates['primary'] = normalize_theme(asset.primary_theme)
         if asset.secondary_theme is not None:
-            theme_updates['secondary'] = asset.secondary_theme
+            theme_updates['secondary'] = normalize_theme(asset.secondary_theme)
         if theme_updates:
             theme_updates['ticker'] = ticker
             db.collection('users').document(user_id).collection('asset_themes').document(ticker).set(
