@@ -8,3 +8,8 @@ venv
 *.db
 debug_*.py
 firebase-credentials.json
+.env.local
+.env*.local
+node_modules/
+.next/
+.claude/
