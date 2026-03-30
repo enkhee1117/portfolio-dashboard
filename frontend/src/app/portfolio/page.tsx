@@ -124,8 +124,12 @@ function PortfolioContent() {
     if (!confirm("Are you sure you want to delete this trade?")) return;
     try {
       const res = await apiCall(`/api/trades/${id}`, { method: "DELETE" });
-      if (res.ok) setTrades(trades.filter((t) => t.id !== id));
-      else toast.error("Failed to delete trade");
+      if (res.ok) {
+        setTrades(trades.filter((t) => t.id !== id));
+        toast.success("Trade deleted");
+      } else {
+        toast.error("Failed to delete trade");
+      }
     } catch { toast.error("Error deleting trade"); }
   };
 
