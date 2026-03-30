@@ -323,29 +323,38 @@ def _scheduled_refresh():
 
 
 # APScheduler — runs weekdays at 5:30 PM US/Eastern (after market close)
+# Only starts in non-serverless environments (Vercel serverless doesn't support background threads)
 scheduler = None
+IS_SERVERLESS = os.environ.get("VERCEL", "") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "")
 
 @asynccontextmanager
 async def lifespan(app):
-    from apscheduler.schedulers.background import BackgroundScheduler
-    from apscheduler.triggers.cron import CronTrigger
     global scheduler
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(
-        _scheduled_refresh,
-        CronTrigger(
-            hour=17, minute=30,
-            day_of_week="mon-fri",  # Skip weekends
-            timezone="US/Eastern",
-        ),
-        id="daily_price_refresh",
-        replace_existing=True,
-    )
-    scheduler.start()
-    logger.info("Price refresh scheduler started — daily at 5:30 PM ET")
+    if not IS_SERVERLESS:
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler
+            from apscheduler.triggers.cron import CronTrigger
+            scheduler = BackgroundScheduler()
+            scheduler.add_job(
+                _scheduled_refresh,
+                CronTrigger(
+                    hour=17, minute=30,
+                    day_of_week="mon-fri",
+                    timezone="US/Eastern",
+                ),
+                id="daily_price_refresh",
+                replace_existing=True,
+            )
+            scheduler.start()
+            logger.info("Price refresh scheduler started — daily at 5:30 PM ET")
+        except Exception as e:
+            logger.warning(f"Scheduler not started: {e}")
+    else:
+        logger.info("Serverless environment — scheduler disabled")
     yield
-    scheduler.shutdown()
-    logger.info("Price refresh scheduler stopped")
+    if scheduler:
+        scheduler.shutdown()
+        logger.info("Price refresh scheduler stopped")
 
 
 app = FastAPI(lifespan=lifespan)

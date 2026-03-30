@@ -1,6 +1,7 @@
 
 *.log
-*.txt
+debug_*.txt
+import_debug.txt
 __pycache__
 .pytest_cache
 .DS_Store
