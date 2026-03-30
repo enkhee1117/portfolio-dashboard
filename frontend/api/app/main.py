@@ -43,12 +43,10 @@ def get_optional_user(authorization: Optional[str] = Header(None)) -> str:
 
 
 def get_user_tickers(db, user_id: str) -> set[str]:
-    """Return the set of tickers a user owns: from trades + manually registered in asset_themes."""
+    """Return the set of tickers a user owns from their asset_themes subcollection.
+    This is the fast path — asset_themes is the user's asset registry,
+    populated by migration, import, and manual registration."""
     tickers: set[str] = set()
-    for doc in db.collection('trades').where(filter=FieldFilter('user_id', '==', user_id)).stream():
-        t = doc.to_dict().get('ticker')
-        if t:
-            tickers.add(t)
     for doc in db.collection('users').document(user_id).collection('asset_themes').stream():
         tickers.add(doc.id)
     return tickers
@@ -445,6 +443,34 @@ async def import_excel(file: UploadFile = File(...), skip_dedup: bool = False, d
         if os.path.exists(file_location):
             os.remove(file_location)
 
+    # Auto-register any new trade tickers in user's asset_themes
+    if count > 0 and user_id != "anonymous":
+        existing_themes = set(
+            doc.id for doc in db.collection('users').document(user_id).collection('asset_themes').stream()
+        )
+        trade_tickers = set()
+        for doc in db.collection('trades').where(filter=FieldFilter('user_id', '==', user_id)).stream():
+            t = doc.to_dict().get('ticker')
+            if t:
+                trade_tickers.add(t)
+        new_tickers = trade_tickers - existing_themes
+        if new_tickers:
+            batch = db.batch()
+            batch_count = 0
+            for ticker in new_tickers:
+                ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
+                batch.set(ref, {'ticker': ticker, 'primary': '', 'secondary': ''})
+                # Ensure shared price entry
+                shared_ref = db.collection('asset_prices').document(ticker)
+                batch.set(shared_ref, {'ticker': ticker, 'price': 0.0, 'last_updated': datetime.utcnow()}, merge=True)
+                batch_count += 2
+                if batch_count >= 400:
+                    batch.commit()
+                    batch = db.batch()
+                    batch_count = 0
+            if batch_count > 0:
+                batch.commit()
+
     return {"message": f"Import successful. Added {count} new trades."}
 
 @app.get("/portfolio", response_model=list[schemas.PortfolioSnapshot])
@@ -491,6 +517,16 @@ def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(g
     trade_data['user_id'] = user_id
     doc_ref = db.collection('trades').document()
     doc_ref.set(trade_data)
+
+    # Auto-register ticker in user's asset_themes if not already there
+    ticker_upper = trade.ticker.upper() if trade.ticker else trade.ticker
+    theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker_upper)
+    if not theme_ref.get().exists:
+        theme_ref.set({'ticker': ticker_upper, 'primary': '', 'secondary': ''})
+        # Ensure shared price entry exists for price refresh
+        shared_ref = db.collection('asset_prices').document(ticker_upper)
+        if not shared_ref.get().exists:
+            shared_ref.set({'ticker': ticker_upper, 'price': 0.0, 'last_updated': datetime.utcnow()})
 
     trades_docs = db.collection('trades').where(filter=FieldFilter('ticker', '==', trade.ticker))
     if user_id != "anonymous":
@@ -583,21 +619,26 @@ def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)
 
 @app.get("/assets", response_model=list[schemas.Asset])
 def list_assets(db=Depends(get_db), user_id: str = Depends(get_current_user)):
-    """List assets for the authenticated user (from trades + manually added)."""
-    tickers = get_user_tickers(db, user_id)
-    if not tickers:
-        return []
-
-    # Load user's theme overrides
+    """List assets for the authenticated user (from asset_themes registry)."""
+    # Single stream of user's asset registry — this IS the ticker list + themes
     user_themes: dict[str, dict] = {}
     for doc in db.collection('users').document(user_id).collection('asset_themes').stream():
         user_themes[doc.id] = doc.to_dict()
 
+    if not user_themes:
+        return []
+
+    # Batch-read all price docs in one round trip instead of N sequential reads
+    price_refs = [db.collection('asset_prices').document(t) for t in user_themes.keys()]
+    price_docs = db.get_all(price_refs)
+    price_data_map: dict[str, dict] = {}
+    for doc in price_docs:
+        if doc.exists:
+            price_data_map[doc.id] = doc.to_dict()
+
     results = []
-    for ticker in tickers:
-        price_doc = db.collection('asset_prices').document(ticker).get()
-        price_data = price_doc.to_dict() if price_doc.exists else {}
-        themes = user_themes.get(ticker, {})
+    for ticker, themes in user_themes.items():
+        price_data = price_data_map.get(ticker, {})
 
         asset_dict = {
             "ticker": ticker,
