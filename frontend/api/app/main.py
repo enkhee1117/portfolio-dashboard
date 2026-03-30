@@ -1273,6 +1273,95 @@ def theme_baskets(period: str = "1y", db=Depends(get_db)):
     return {"themes": result_themes}
 
 
+# ── Data Migration ────────────────────────────────────────────────────
+
+@app.post("/admin/migrate-to-user")
+def migrate_to_user(db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """
+    One-time migration: assign current user's UID to all unowned trades,
+    copy themes from asset_prices to user's subcollection, and
+    copy portfolio_snapshots to user's subcollection.
+    Only works for authenticated users.
+    """
+    if user_id == "anonymous":
+        raise HTTPException(status_code=401, detail="Must be authenticated to migrate data.")
+
+    # 1. Assign user_id to all trades that don't have one
+    trades = db.collection('trades').stream()
+    batch = db.batch()
+    batch_count = 0
+    trades_migrated = 0
+    for doc in trades:
+        d = doc.to_dict()
+        if not d.get('user_id') or d['user_id'] == 'anonymous':
+            batch.update(doc.reference, {'user_id': user_id})
+            batch_count += 1
+            trades_migrated += 1
+            if batch_count >= 400:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+    if batch_count > 0:
+        batch.commit()
+
+    # 2. Copy themes from asset_prices to user's asset_themes subcollection
+    assets = db.collection('asset_prices').stream()
+    batch = db.batch()
+    batch_count = 0
+    themes_migrated = 0
+    for doc in assets:
+        d = doc.to_dict()
+        ticker = d.get('ticker', doc.id)
+        p_theme = d.get('primary_theme')
+        s_theme = d.get('secondary_theme')
+        if p_theme or s_theme:
+            theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
+            batch.set(theme_ref, {
+                'ticker': ticker,
+                'primary': p_theme or '',
+                'secondary': s_theme or '',
+            }, merge=True)
+            batch_count += 1
+            themes_migrated += 1
+            if batch_count >= 400:
+                batch.commit()
+                batch = db.batch()
+                batch_count = 0
+    if batch_count > 0:
+        batch.commit()
+
+    # 3. Copy portfolio_snapshots to user's subcollection
+    snapshots = db.collection('portfolio_snapshots').stream()
+    batch = db.batch()
+    batch_count = 0
+    snapshots_migrated = 0
+    for doc in snapshots:
+        d = doc.to_dict()
+        user_snap_ref = db.collection('users').document(user_id).collection('portfolio_snapshots').document(doc.id)
+        batch.set(user_snap_ref, d, merge=True)
+        batch_count += 1
+        snapshots_migrated += 1
+        if batch_count >= 400:
+            batch.commit()
+            batch = db.batch()
+            batch_count = 0
+    if batch_count > 0:
+        batch.commit()
+
+    # 4. Recompute today's snapshot for this user
+    try:
+        calculator.compute_and_store_snapshot(db, user_id=user_id)
+    except Exception:
+        pass
+
+    return {
+        "message": f"Migration complete for user {user_id[:8]}...",
+        "trades_migrated": trades_migrated,
+        "themes_migrated": themes_migrated,
+        "snapshots_migrated": snapshots_migrated,
+    }
+
+
 # ── CSV Export (Trades) ───────────────────────────────────────────────
 
 @app.get("/trades/export-csv")

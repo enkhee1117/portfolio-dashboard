@@ -646,6 +646,34 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Data Migration */}
+        <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Migrate Data to Account</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                One-time operation to assign all existing trades, themes, and snapshots to your account.
+                Run this after signing up for the first time.
+              </p>
+            </div>
+            <button
+              onClick={async () => {
+                if (!confirm("This will assign all existing data to your account. Continue?")) return;
+                try {
+                  const res = await apiCall("/api/admin/migrate-to-user", { method: "POST" });
+                  if (res.ok) {
+                    const data = await res.json();
+                    toast.success(`Migrated ${data.trades_migrated} trades, ${data.themes_migrated} themes, ${data.snapshots_migrated} snapshots.`);
+                  } else toast.error("Migration failed.");
+                } catch { toast.error("Error running migration."); }
+              }}
+              className="shrink-0 ml-6 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Migrate Data
+            </button>
+          </div>
+        </div>
+
         {/* About */}
         <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-lg">
           <h3 className="text-lg font-semibold text-white">About</h3>
