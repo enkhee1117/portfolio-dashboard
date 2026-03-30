@@ -591,8 +591,9 @@ def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(g
     # Ensure shared price entry exists with a live price
     _ensure_asset_price(db, ticker_upper)
 
-    # Invalidate cached snapshot so next portfolio view recomputes
-    _invalidate_snapshot_cache(db, user_id)
+    # Delta-update the cached snapshot for just this ticker (~5 reads vs ~2500 full recompute)
+    if not calculator.apply_trade_delta(db, user_id, trade.ticker):
+        _invalidate_snapshot_cache(db, user_id)  # Fallback if no cached snapshot
 
     trade_data['id'] = doc_ref.id
     return schemas.Trade(**trade_data)
@@ -611,7 +612,10 @@ def delete_trade(trade_id: str, db = Depends(get_db), user_id: str = Depends(get
 
     ticker = trade_data.get('ticker')
     doc_ref.delete()
-    _invalidate_snapshot_cache(db, user_id)
+
+    # Delta-update snapshot for just this ticker
+    if not calculator.apply_trade_delta(db, user_id, ticker):
+        _invalidate_snapshot_cache(db, user_id)
 
     return {"message": "Trade deleted successfully"}
 
@@ -627,10 +631,19 @@ def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)
     if user_id != "anonymous" and existing.get('user_id') and existing['user_id'] != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to update this trade")
 
+    old_ticker = existing.get('ticker')
     trade_data = trade.model_dump()
     trade_data['user_id'] = user_id
     doc_ref.update(trade_data)
-    _invalidate_snapshot_cache(db, user_id)
+
+    # Delta-update affected ticker(s)
+    tickers_to_update = {trade.ticker}
+    if old_ticker and old_ticker != trade.ticker:
+        tickers_to_update.add(old_ticker)
+    for t in tickers_to_update:
+        if not calculator.apply_trade_delta(db, user_id, t):
+            _invalidate_snapshot_cache(db, user_id)
+            break
 
     trade_data['id'] = trade_id
     if hasattr(trade_data['date'], 'replace'):

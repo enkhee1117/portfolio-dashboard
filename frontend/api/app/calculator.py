@@ -160,6 +160,155 @@ def compute_and_store_snapshot(db, date_str: str | None = None, user_id: str = "
     return snapshot
 
 
+def _recompute_ticker_position(db, user_id: str, ticker: str) -> dict | None:
+    """Replay all trades for a single ticker to get its exact position.
+    Returns a position dict or None if no trades exist for this ticker.
+    Cost: ~5 reads (average trades per ticker) + 2 reads (price + theme)."""
+    from google.cloud.firestore_v1.base_query import FieldFilter
+
+    query = db.collection('trades').where(filter=FieldFilter('ticker', '==', ticker))
+    if user_id != "anonymous":
+        query = query.where(filter=FieldFilter('user_id', '==', user_id))
+
+    trades = []
+    for doc in query.stream():
+        d = doc.to_dict()
+        if 'date' in d and hasattr(d['date'], 'replace'):
+            d['date'] = d['date'].replace(tzinfo=None)
+        d['id'] = doc.id
+        trades.append(schemas.Trade(**d))
+
+    if not trades:
+        return None
+
+    trades.sort(key=lambda t: t.date)
+    ytd_start = datetime(datetime.utcnow().year, 1, 1)
+
+    qty = 0.0
+    cost_basis = 0.0
+    realized_pnl = 0.0
+    realized_pnl_ytd = 0.0
+
+    for t in trades:
+        if t.type != 'Equity':
+            continue
+        if t.side == 'Buy':
+            new_qty = qty + t.quantity
+            if new_qty > 0:
+                cost_basis = ((qty * cost_basis) + (t.quantity * t.price)) / new_qty
+            qty = new_qty
+        elif t.side == 'Sell':
+            pnl = (t.price - cost_basis) * t.quantity
+            realized_pnl += pnl
+            if t.date >= ytd_start:
+                realized_pnl_ytd += pnl
+            qty -= t.quantity
+            if abs(qty) < 0.0001:
+                qty = 0.0
+                cost_basis = 0.0
+
+    # Fetch current price and themes
+    current_price = 0.0
+    p_theme = None
+    s_theme = None
+
+    price_doc = db.collection('asset_prices').document(ticker).get()
+    if price_doc.exists:
+        pd = price_doc.to_dict()
+        current_price = pd.get('price', 0.0)
+        p_theme = pd.get('primary_theme')
+        s_theme = pd.get('secondary_theme')
+
+    if user_id != "anonymous":
+        try:
+            theme_doc = db.collection('users').document(user_id).collection('asset_themes').document(ticker).get()
+            if theme_doc.exists:
+                td = theme_doc.to_dict()
+                p_theme = td.get('primary') or p_theme
+                s_theme = td.get('secondary') or s_theme
+        except Exception:
+            pass
+
+    market_val = qty * current_price
+    unrealized = (current_price - cost_basis) * qty if abs(qty) > 0.0001 else 0.0
+
+    return {
+        "ticker": ticker,
+        "quantity": qty,
+        "average_price": round(cost_basis, 4),
+        "current_price": current_price,
+        "market_value": round(market_val, 2),
+        "unrealized_pnl": round(unrealized, 2),
+        "realized_pnl": round(realized_pnl, 2),
+        "realized_pnl_ytd": round(realized_pnl_ytd, 2),
+        "primary_theme": p_theme,
+        "secondary_theme": s_theme,
+    }
+
+
+def apply_trade_delta(db, user_id: str, ticker: str, action: str = "add") -> bool:
+    """Apply a trade's effect to the cached snapshot by recomputing only the affected ticker.
+    action: "add" (new/updated trade) or "remove" (deleted trade).
+    Returns True if snapshot was updated, False if cache miss (caller should invalidate).
+    Cost: ~5-10 Firestore reads + 1 write (vs ~2500 for full recompute)."""
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+
+    # Read cached snapshot
+    try:
+        if user_id != "anonymous":
+            snap_ref = db.collection('users').document(user_id).collection('portfolio_snapshots').document(today)
+        else:
+            snap_ref = db.collection('portfolio_snapshots').document(today)
+        snap_doc = snap_ref.get()
+        if not snap_doc.exists:
+            return False
+        snapshot = snap_doc.to_dict()
+        positions = snapshot.get('positions', [])
+        if not positions:
+            return False
+    except Exception:
+        return False
+
+    # Recompute just this ticker's position from its trades
+    new_position = _recompute_ticker_position(db, user_id, ticker)
+
+    # Find and replace (or add/remove) the ticker's position in the snapshot
+    old_market_value = 0.0
+    new_positions = []
+    found = False
+    for p in positions:
+        if p.get('ticker') == ticker:
+            old_market_value = p.get('market_value', 0.0)
+            found = True
+            # Replace with recomputed position (skip if no trades left)
+            if new_position and (abs(new_position['quantity']) > 0.0001 or abs(new_position['realized_pnl']) > 0.001):
+                new_positions.append(new_position)
+        else:
+            new_positions.append(p)
+
+    # If ticker wasn't in snapshot before, add it
+    if not found and new_position and (abs(new_position['quantity']) > 0.0001 or abs(new_position['realized_pnl']) > 0.001):
+        new_positions.append(new_position)
+
+    # Update total_value
+    new_market_value = new_position['market_value'] if new_position else 0.0
+    total_value = snapshot.get('total_value', 0.0) - old_market_value + new_market_value
+
+    # Write updated snapshot
+    try:
+        snap_ref.set({
+            "date": today,
+            "total_value": round(total_value, 2),
+            "positions": new_positions,
+            "computed_at": datetime.utcnow(),
+        })
+        logger.info(f"Delta update for {ticker}: {len(new_positions)} positions, ${total_value:,.2f}")
+        return True
+    except Exception as e:
+        logger.error(f"Delta update failed for {ticker}: {e}")
+        return False
+
+
 def get_cached_portfolio(db, user_id: str = "anonymous"):
     """
     Read today's snapshot if it exists and has positions.
