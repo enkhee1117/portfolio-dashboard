@@ -109,12 +109,8 @@ def compute_rsi(closes: list[float], period: int = 14) -> float | None:
 
 
 def compute_and_store_rsi(db):
-    """Compute RSI for all tickers from price_series and store in asset_prices."""
-    # Load set of tickers that exist in asset_prices (avoid NOT_FOUND on update)
-    asset_tickers = set()
-    for doc in db.collection('asset_prices').stream():
-        asset_tickers.add(doc.id)
-
+    """Compute RSI for all tickers from price_series and store in asset_prices.
+    Skips the full asset_prices stream — uses set(merge=True) to safely upsert."""
     docs = db.collection('price_series').stream()
     batch = db.batch()
     batch_count = 0
@@ -122,9 +118,6 @@ def compute_and_store_rsi(db):
 
     for doc in docs:
         ticker = doc.id
-        if ticker not in asset_tickers:
-            continue
-
         d = doc.to_dict()
         prices_map = d.get('prices', {})
         if not prices_map:
@@ -135,7 +128,8 @@ def compute_and_store_rsi(db):
 
         rsi = compute_rsi(closes)
         if rsi is not None:
-            batch.update(db.collection('asset_prices').document(ticker), {"rsi": rsi})
+            # set(merge=True) avoids NOT_FOUND — creates doc if missing, merges if exists
+            batch.set(db.collection('asset_prices').document(ticker), {"rsi": rsi}, merge=True)
             batch_count += 1
             computed += 1
 
@@ -188,6 +182,17 @@ def get_last_trading_day() -> str:
 
 # ── Scheduled Price Refresh ───────────────────────────────────────────
 
+def _get_active_tickers(db) -> list[str]:
+    """Return tickers that at least one user holds (from trades), plus any in asset_prices.
+    This avoids refreshing orphaned tickers nobody cares about."""
+    tickers = set()
+    for doc in db.collection('trades').stream():
+        t = doc.to_dict().get('ticker')
+        if t:
+            tickers.add(t)
+    return sorted(tickers)
+
+
 def _run_price_refresh():
     """Standalone price refresh function called by scheduler and API."""
     import yfinance as yf
@@ -195,22 +200,30 @@ def _run_price_refresh():
     import math
 
     db = get_db()
-    docs = db.collection('asset_prices').stream()
-    tickers = [d.to_dict().get('ticker') for d in docs if d.to_dict().get('ticker')]
+    tickers = _get_active_tickers(db)
 
     if not tickers:
         logger.info("Price refresh: no assets to update.")
         return {"updated": 0, "failed": []}
 
-    try:
-        data = yf.download(tickers, period='5d', progress=False)
-    except Exception as e:
-        logger.error(f"Price refresh: Yahoo Finance error: {e}")
+    # Download in chunks to avoid yfinance timeout at scale
+    CHUNK_SIZE = 500
+    all_data = None
+    for i in range(0, len(tickers), CHUNK_SIZE):
+        chunk = tickers[i:i + CHUNK_SIZE]
+        try:
+            chunk_data = yf.download(chunk, period='5d', progress=False)
+            if all_data is None:
+                all_data = chunk_data
+            elif not chunk_data.empty:
+                all_data = pd.concat([all_data, chunk_data], axis=1)
+        except Exception as e:
+            logger.error(f"Price refresh: Yahoo Finance error for chunk {i}: {e}")
+
+    if all_data is None or all_data.empty:
         return {"updated": 0, "failed": tickers}
 
-    if data.empty:
-        return {"updated": 0, "failed": tickers}
-
+    data = all_data
     is_multi = isinstance(data.columns, pd.MultiIndex)
     now = datetime.utcnow()
 
@@ -943,17 +956,19 @@ def refresh_prices():
 @app.get("/assets/refresh-status")
 def refresh_status(db=Depends(get_db)):
     """Return auto-refresh schedule info and last refresh timestamp."""
-    # Last refresh
+    # Last refresh — single ordered query instead of streaming all docs
     latest = None
-    docs = db.collection('asset_prices').stream()
-    for doc in docs:
-        d = doc.to_dict()
-        lu = d.get('last_updated')
-        if lu:
-            if hasattr(lu, 'replace'):
-                lu = lu.replace(tzinfo=None)
-            if latest is None or lu > latest:
-                latest = lu
+    try:
+        from google.cloud.firestore_v1 import query as firestore_query
+        docs = db.collection('asset_prices').order_by(
+            'last_updated', direction='DESCENDING'
+        ).limit(1).stream()
+        for doc in docs:
+            lu = doc.to_dict().get('last_updated')
+            if lu and hasattr(lu, 'replace'):
+                latest = lu.replace(tzinfo=None)
+    except Exception:
+        pass
 
     # Next scheduled run
     next_run = None

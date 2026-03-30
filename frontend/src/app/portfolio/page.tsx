@@ -33,6 +33,8 @@ function PortfolioContent() {
   const [assetFilter, setAssetFilter] = useState("");
   const [primaryFilter, setPrimaryFilter] = useState("");
   const [secondaryFilter, setSecondaryFilter] = useState("");
+  const [assetPage, setAssetPage] = useState(0);
+  const ASSETS_PER_PAGE = 50;
 
   const toast = useToast();
   useCmdK();
@@ -332,26 +334,30 @@ function PortfolioContent() {
           ) : (
             <>
               <div className="flex items-center gap-3 flex-wrap">
-                <input type="text" placeholder="Search ticker or theme..." value={assetFilter} onChange={(e) => setAssetFilter(e.target.value)}
+                <input type="text" placeholder="Search ticker or theme..." value={assetFilter} onChange={(e) => { setAssetFilter(e.target.value); setAssetPage(0); }}
                   className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 w-full md:w-64 text-sm" />
-                <select value={primaryFilter} onChange={(e) => setPrimaryFilter(e.target.value)} className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm">
+                <select value={primaryFilter} onChange={(e) => { setPrimaryFilter(e.target.value); setAssetPage(0); }} className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm">
                   <option value="">All Primary</option>
                   {themes.primary.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
-                <select value={secondaryFilter} onChange={(e) => setSecondaryFilter(e.target.value)} className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm">
+                <select value={secondaryFilter} onChange={(e) => { setSecondaryFilter(e.target.value); setAssetPage(0); }} className="bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm">
                   <option value="">All Secondary</option>
                   {themes.secondary.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
                 {(assetFilter || primaryFilter || secondaryFilter) && (
-                  <button onClick={() => { setAssetFilter(""); setPrimaryFilter(""); setSecondaryFilter(""); }} className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700">Clear</button>
+                  <button onClick={() => { setAssetFilter(""); setPrimaryFilter(""); setSecondaryFilter(""); setAssetPage(0); }} className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700">Clear</button>
                 )}
                 <span className="text-xs text-gray-500 ml-auto">
-                  {assets.filter(a => {
+                  {(() => {
                     const q = assetFilter.toLowerCase();
-                    return (!q || a.ticker.toLowerCase().includes(q) || a.primary_theme.toLowerCase().includes(q) || a.secondary_theme.toLowerCase().includes(q))
+                    const filtered = assets.filter(a =>
+                      (!q || a.ticker.toLowerCase().includes(q) || a.primary_theme.toLowerCase().includes(q) || a.secondary_theme.toLowerCase().includes(q))
                       && (!primaryFilter || a.primary_theme === primaryFilter)
-                      && (!secondaryFilter || a.secondary_theme === secondaryFilter);
-                  }).length} of {assets.length}
+                      && (!secondaryFilter || a.secondary_theme === secondaryFilter)
+                    );
+                    const totalPages = Math.ceil(filtered.length / ASSETS_PER_PAGE);
+                    return `${Math.min(assetPage * ASSETS_PER_PAGE + 1, filtered.length)}-${Math.min((assetPage + 1) * ASSETS_PER_PAGE, filtered.length)} of ${filtered.length}`;
+                  })()}
                 </span>
               </div>
               <div className="overflow-x-auto rounded-xl border border-gray-700 bg-gray-800 shadow-xl">
@@ -374,6 +380,7 @@ function PortfolioContent() {
                           && (!primaryFilter || a.primary_theme === primaryFilter)
                           && (!secondaryFilter || a.secondary_theme === secondaryFilter);
                       })
+                      .slice(assetPage * ASSETS_PER_PAGE, (assetPage + 1) * ASSETS_PER_PAGE)
                       .map((asset) => (
                         <tr key={asset.ticker} onClick={() => openTickerDetail(asset.ticker)} className="hover:bg-gray-700/50 transition-colors cursor-pointer">
                           <td className="px-4 py-2.5 font-medium text-white">{asset.ticker}</td>
@@ -415,6 +422,25 @@ function PortfolioContent() {
                   </tbody>
                 </table>
               </div>
+              {(() => {
+                const q = assetFilter.toLowerCase();
+                const filteredCount = assets.filter(a =>
+                  (!q || a.ticker.toLowerCase().includes(q) || a.primary_theme.toLowerCase().includes(q) || a.secondary_theme.toLowerCase().includes(q))
+                  && (!primaryFilter || a.primary_theme === primaryFilter)
+                  && (!secondaryFilter || a.secondary_theme === secondaryFilter)
+                ).length;
+                const totalPages = Math.ceil(filteredCount / ASSETS_PER_PAGE);
+                if (totalPages <= 1) return null;
+                return (
+                  <div className="flex items-center justify-center gap-2 mt-3">
+                    <button onClick={() => setAssetPage(p => Math.max(0, p - 1))} disabled={assetPage === 0}
+                      className="px-3 py-1 rounded-md text-xs border border-gray-700 text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30 transition-colors">Prev</button>
+                    <span className="text-xs text-gray-500">Page {assetPage + 1} of {totalPages}</span>
+                    <button onClick={() => setAssetPage(p => Math.min(totalPages - 1, p + 1))} disabled={assetPage >= totalPages - 1}
+                      className="px-3 py-1 rounded-md text-xs border border-gray-700 text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30 transition-colors">Next</button>
+                  </div>
+                );
+              })()}
             </>
           )
         )}

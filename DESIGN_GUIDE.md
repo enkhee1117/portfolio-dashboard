@@ -417,6 +417,38 @@ npx vitest            # watch mode
 
 ---
 
+## Scaling
+
+### Design principles
+- **User-scoped reads are O(user's tickers)**, not O(total tickers). GET /assets, calculator, and portfolio endpoints only look up tickers the user owns.
+- **Shared collections (`asset_prices`, `price_series`) are write-only caches** — written by price refresh and RSI compute, never streamed by user requests.
+- **Price refresh is scoped to active tickers** — only refreshes tickers that at least one user holds (derived from `trades` collection), not all entries in `asset_prices`.
+
+### Implemented optimizations
+| Optimization | Before | After |
+|---|---|---|
+| yfinance download | One call with all tickers (timeout at ~5000) | Chunked in batches of 500 |
+| Price refresh ticker source | Stream all `asset_prices` docs | Query unique tickers from `trades` |
+| RSI compute | Stream all `asset_prices` to build ticker set, then stream `price_series` | Stream `price_series` only, use `set(merge=True)` to upsert |
+| Refresh status | Stream all `asset_prices` to find latest `last_updated` | `order_by('last_updated').limit(1)` — 1 read |
+| GET /assets | Stream all `asset_prices` (old) | Per-ticker `.document(ticker).get()` for user's tickers only |
+| Assets tab (frontend) | Render all assets in one table | Paginated at 50 per page with Prev/Next controls |
+
+### Cost estimates at scale (daily refresh)
+| Ticker count | Reads/day | Writes/day | Est. monthly cost |
+|---|---|---|---|
+| 100 | ~200 | ~400 | ~$3 |
+| 1,000 | ~2,000 | ~4,000 | ~$25 |
+| 5,000 | ~10,000 | ~20,000 | ~$120 |
+
+### Future optimizations (not yet needed)
+- **Redis/in-memory cache** for `asset_prices` reads if Firestore costs become significant
+- **Server-side pagination** for GET /assets if users have >500 tickers
+- **Debounced price refresh** — skip tickers refreshed within the last hour
+- **Firestore composite indexes** on `trades` collection for `user_id + ticker` if query performance degrades
+
+---
+
 ## Deployment
 
 ### Local vs Production Differences
