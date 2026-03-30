@@ -6,11 +6,13 @@ import PositionTable from "../../components/PositionTable";
 import { PortfolioSnapshot, Trade, Asset, ThemeLists } from "../types";
 import { useToast } from "../../components/Toast";
 import { apiCall } from "../../lib/api";
+import { useAuth } from "../../lib/AuthContext";
 import { useEscape, useCmdK } from "../../components/useKeyboard";
 
 type TabType = "positions" | "trades" | "assets";
 
 function PortfolioContent() {
+  const { user } = useAuth();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
   const initialTab: TabType = tabParam === "trades" ? "trades" : tabParam === "assets" ? "assets" : "positions";
@@ -65,6 +67,7 @@ function PortfolioContent() {
   useEscape(detailTicker ? () => setDetailTicker(null) : editingTrade ? () => setEditingTrade(null) : null);
 
   useEffect(() => {
+    if (!user) return;
     apiCall("/api/portfolio")
       .then(async (r) => { if (r.ok) setPositions(await r.json()); })
       .catch(console.error)
@@ -82,7 +85,7 @@ function PortfolioContent() {
       })
       .catch(console.error)
       .finally(() => setAssetLoading(false));
-  }, []);
+  }, [user]);
 
   const activeCount = positions.filter((p) => p.quantity > 0).length;
 

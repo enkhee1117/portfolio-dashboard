@@ -7,6 +7,7 @@ import PortfolioChart from '../components/PortfolioChart';
 import { PortfolioSnapshot, ThemeLists, Asset } from './types';
 import { useToast } from '../components/Toast';
 import { apiCall } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 import { useCmdK, useEscape } from '../components/useKeyboard';
 
 export default function Home() {
@@ -16,6 +17,7 @@ export default function Home() {
   const [showManualTrade, setShowManualTrade] = useState(false);
   const [pnlView, setPnlView] = useState<'ytd' | 'all'>('ytd');
 
+  const { user } = useAuth();
   const toast = useToast();
   useCmdK();
   useEscape(showManualTrade ? () => setShowManualTrade(false) : null);
@@ -49,9 +51,10 @@ export default function Home() {
   };
 
   useEffect(() => {
+    if (!user) return;
     fetchPortfolio();
     apiCall("/api/assets").then(async r => { if (r.ok) setAssets(await r.json()); }).catch(console.error);
-  }, []);
+  }, [user]);
 
   const totalMarketValue = positions.reduce((acc, pos) => acc + pos.market_value, 0);
   const totalUnrealized = positions.reduce((acc, pos) => acc + pos.unrealized_pnl, 0);

@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { PortfolioHistoryPoint } from "../app/types";
 import { apiCall } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 import {
   AreaChart,
   Area,
@@ -22,10 +23,12 @@ const PERIODS = [
 
 export default function PortfolioChart() {
   const [period, setPeriod] = useState("ytd");
+  const { user } = useAuth();
   const [data, setData] = useState<PortfolioHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!user) return;
     setLoading(true);
     apiCall(`/api/portfolio/history?period=${period}`)
       .then(async (r) => {
@@ -35,7 +38,7 @@ export default function PortfolioChart() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [period]);
+  }, [user, period]);
 
   // Compute change from first to last point
   const firstValue = data.length > 0 ? data[0].value : 0;

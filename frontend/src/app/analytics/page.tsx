@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { PortfolioSnapshot, ThemeBasketSeries } from "../types";
 import { apiCall } from "../../lib/api";
+import { useAuth } from "../../lib/AuthContext";
 import {
   BarChart,
   Bar,
@@ -30,6 +31,7 @@ interface ThemeEntry {
 }
 
 export default function AnalyticsPage() {
+  const { user } = useAuth();
   const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPrimary, setSelectedPrimary] = useState<string | null>(null);
@@ -41,20 +43,21 @@ export default function AnalyticsPage() {
   const [basketLoading, setBasketLoading] = useState(true);
 
   useEffect(() => {
+    if (!user) return;
     apiCall("/api/portfolio")
       .then(async (r) => { if (r.ok) setPositions(await r.json()); })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [user]);
 
   useEffect(() => {
+    if (!user) return;
     setBasketLoading(true);
     apiCall(`/api/analytics/theme-baskets?period=${basketPeriod}`)
       .then(async (r) => { if (r.ok) { const data = await r.json(); setBaskets(data.themes || []); } })
-
       .catch(console.error)
       .finally(() => setBasketLoading(false));
-  }, [basketPeriod]);
+  }, [user, basketPeriod]);
 
   // Long positions only
   const longPositions = useMemo(
