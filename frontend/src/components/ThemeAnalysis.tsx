@@ -32,7 +32,7 @@ const ThemeAnalysis: React.FC<ThemeAnalysisProps> = ({ positions }) => {
   const [selectedType, setSelectedType] = useState<"primary" | "secondary" | null>(null);
 
   const longPositions = useMemo(
-    () => positions.filter((p) => p.quantity > 0 && p.market_value > 0),
+    () => positions.filter((p) => p.quantity > 0),
     [positions]
   );
 

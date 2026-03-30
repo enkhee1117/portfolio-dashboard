@@ -523,6 +523,35 @@ def get_trades(
         result = result[offset:offset + limit]
     return result
 
+def _fetch_live_price(ticker: str) -> float:
+    """Quick single-ticker price lookup from Yahoo Finance. Returns 0 on failure."""
+    try:
+        import yfinance as yf
+        data = yf.download(ticker, period='1d', progress=False)
+        if not data.empty:
+            return round(float(data['Close'].iloc[-1]), 2)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _ensure_asset_price(db, ticker: str):
+    """Ensure shared asset_prices entry exists with a live price. Creates if missing."""
+    shared_ref = db.collection('asset_prices').document(ticker)
+    if not shared_ref.get().exists:
+        price = _fetch_live_price(ticker)
+        shared_ref.set({
+            'ticker': ticker,
+            'price': price,
+            'last_updated': datetime.utcnow(),
+        })
+    elif db.collection('asset_prices').document(ticker).get().to_dict().get('price', 0) == 0:
+        # Price is 0 — try to fetch a real one
+        price = _fetch_live_price(ticker)
+        if price > 0:
+            shared_ref.update({'price': price, 'last_updated': datetime.utcnow()})
+
+
 def _invalidate_snapshot_cache(db, user_id: str):
     """Delete today's cached snapshot so the next GET /portfolio triggers a fresh compute.
     This is cheap (1 delete) vs full recompute (~2500 reads)."""
@@ -559,10 +588,8 @@ def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(g
     theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker_upper)
     if not theme_ref.get().exists:
         theme_ref.set({'ticker': ticker_upper, 'primary': '', 'secondary': ''})
-        # Ensure shared price entry exists for price refresh
-        shared_ref = db.collection('asset_prices').document(ticker_upper)
-        if not shared_ref.get().exists:
-            shared_ref.set({'ticker': ticker_upper, 'price': 0.0, 'last_updated': datetime.utcnow()})
+    # Ensure shared price entry exists with a live price
+    _ensure_asset_price(db, ticker_upper)
 
     # Invalidate cached snapshot so next portfolio view recomputes
     _invalidate_snapshot_cache(db, user_id)
@@ -681,12 +708,13 @@ def create_asset(asset: schemas.AssetCreate, db=Depends(get_db), user_id: str = 
     if ticker in user_tickers:
         raise HTTPException(status_code=409, detail=f"Asset '{ticker}' already exists.")
 
-    # Ensure shared price entry exists (for price refresh to pick up)
+    # Ensure shared price entry exists with a live price
     shared_ref = db.collection('asset_prices').document(ticker)
     if not shared_ref.get().exists:
+        price = _fetch_live_price(ticker) or asset.price
         shared_ref.set({
             "ticker": ticker,
-            "price": asset.price,
+            "price": price,
             "last_updated": datetime.utcnow(),
         })
 
