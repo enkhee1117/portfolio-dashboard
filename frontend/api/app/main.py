@@ -42,6 +42,18 @@ def get_optional_user(authorization: Optional[str] = Header(None)) -> str:
         return "anonymous"
 
 
+def get_user_tickers(db, user_id: str) -> set[str]:
+    """Return the set of tickers a user owns: from trades + manually registered in asset_themes."""
+    tickers: set[str] = set()
+    for doc in db.collection('trades').where(filter=FieldFilter('user_id', '==', user_id)).stream():
+        t = doc.to_dict().get('ticker')
+        if t:
+            tickers.add(t)
+    for doc in db.collection('users').document(user_id).collection('asset_themes').stream():
+        tickers.add(doc.id)
+    return tickers
+
+
 # ── Shared Price Fetching Utilities ───────────────────────────────────
 
 def fetch_and_store_ticker_prices(db, ticker: str, start: str = "2020-01-01"):
@@ -557,14 +569,37 @@ def update_trade(trade_id: str, trade: schemas.TradeCreate, db = Depends(get_db)
 # ── Asset / Theme Management ──────────────────────────────────────────
 
 @app.get("/assets", response_model=list[schemas.Asset])
-def list_assets(db=Depends(get_db)):
-    docs = db.collection('asset_prices').stream()
+def list_assets(db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """List assets for the authenticated user (from trades + manually added)."""
+    tickers = get_user_tickers(db, user_id)
+    if not tickers:
+        return []
+
+    # Load user's theme overrides
+    user_themes: dict[str, dict] = {}
+    for doc in db.collection('users').document(user_id).collection('asset_themes').stream():
+        user_themes[doc.id] = doc.to_dict()
+
     results = []
-    for doc in docs:
-        d = doc.to_dict()
-        if 'last_updated' in d and hasattr(d['last_updated'], 'replace'):
-            d['last_updated'] = d['last_updated'].replace(tzinfo=None)
-        results.append(schemas.Asset(**d))
+    for ticker in tickers:
+        price_doc = db.collection('asset_prices').document(ticker).get()
+        price_data = price_doc.to_dict() if price_doc.exists else {}
+        themes = user_themes.get(ticker, {})
+
+        asset_dict = {
+            "ticker": ticker,
+            "price": price_data.get("price", 0.0),
+            "primary_theme": themes.get("primary") or price_data.get("primary_theme", ""),
+            "secondary_theme": themes.get("secondary") or price_data.get("secondary_theme", ""),
+            "last_updated": price_data.get("last_updated"),
+            "previous_close": price_data.get("previous_close"),
+            "daily_change": price_data.get("daily_change"),
+            "daily_change_pct": price_data.get("daily_change_pct"),
+            "rsi": price_data.get("rsi"),
+        }
+        if asset_dict['last_updated'] and hasattr(asset_dict['last_updated'], 'replace'):
+            asset_dict['last_updated'] = asset_dict['last_updated'].replace(tzinfo=None)
+        results.append(schemas.Asset(**asset_dict))
     results.sort(key=lambda a: a.ticker)
     return results
 
@@ -574,21 +609,11 @@ def list_themes(db=Depends(get_db), user_id: str = Depends(get_current_user)):
     primary_set: set[str] = set()
     secondary_set: set[str] = set()
 
-    # Read from user's theme assignments if authenticated
-    if user_id != "anonymous":
-        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
-        for doc in docs:
-            d = doc.to_dict()
-            if d.get('primary'): primary_set.add(d['primary'])
-            if d.get('secondary'): secondary_set.add(d['secondary'])
-
-    # Fall back to shared asset_prices themes (backward compatible)
-    if not primary_set:
-        docs = db.collection('asset_prices').stream()
-        for doc in docs:
-            d = doc.to_dict()
-            if d.get('primary_theme'): primary_set.add(d['primary_theme'])
-            if d.get('secondary_theme'): secondary_set.add(d['secondary_theme'])
+    docs = db.collection('users').document(user_id).collection('asset_themes').stream()
+    for doc in docs:
+        d = doc.to_dict()
+        if d.get('primary'): primary_set.add(d['primary'])
+        if d.get('secondary'): secondary_set.add(d['secondary'])
 
     return {
         "primary": sorted(primary_set),
@@ -597,19 +622,30 @@ def list_themes(db=Depends(get_db), user_id: str = Depends(get_current_user)):
 
 
 @app.post("/assets", response_model=schemas.Asset, status_code=201)
-def create_asset(asset: schemas.AssetCreate, db=Depends(get_db)):
+def create_asset(asset: schemas.AssetCreate, db=Depends(get_db), user_id: str = Depends(get_current_user)):
     ticker = asset.ticker.upper()
-    doc_ref = db.collection('asset_prices').document(ticker)
-    if doc_ref.get().exists:
+
+    # Check if user already has this asset
+    user_theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
+    user_tickers = get_user_tickers(db, user_id)
+    if ticker in user_tickers:
         raise HTTPException(status_code=409, detail=f"Asset '{ticker}' already exists.")
-    data = {
+
+    # Ensure shared price entry exists (for price refresh to pick up)
+    shared_ref = db.collection('asset_prices').document(ticker)
+    if not shared_ref.get().exists:
+        shared_ref.set({
+            "ticker": ticker,
+            "price": asset.price,
+            "last_updated": datetime.utcnow(),
+        })
+
+    # Write themes to user-scoped collection
+    user_theme_ref.set({
         "ticker": ticker,
-        "price": asset.price,
-        "primary_theme": asset.primary_theme,
-        "secondary_theme": asset.secondary_theme,
-        "last_updated": datetime.utcnow(),
-    }
-    doc_ref.set(data)
+        "primary": asset.primary_theme,
+        "secondary": asset.secondary_theme,
+    })
 
     # Auto-fetch historical prices for this new ticker (best-effort)
     try:
@@ -622,36 +658,38 @@ def create_asset(asset: schemas.AssetCreate, db=Depends(get_db)):
     except Exception:
         pass
 
-    data['last_updated'] = data['last_updated'].replace(tzinfo=None)
+    # Build response from shared price data + user themes
+    price_data = shared_ref.get().to_dict() or {}
+    data = {
+        "ticker": ticker,
+        "price": price_data.get("price", asset.price),
+        "primary_theme": asset.primary_theme,
+        "secondary_theme": asset.secondary_theme,
+        "last_updated": price_data.get("last_updated"),
+    }
+    if data['last_updated'] and hasattr(data['last_updated'], 'replace'):
+        data['last_updated'] = data['last_updated'].replace(tzinfo=None)
     return schemas.Asset(**data)
 
 
 @app.put("/assets/{ticker}", response_model=schemas.Asset)
-def update_asset(ticker: str, asset: schemas.AssetUpdate, db=Depends(get_db)):
+def update_asset(ticker: str, asset: schemas.AssetUpdate, db=Depends(get_db), user_id: str = Depends(get_current_user)):
     ticker = ticker.upper()
-    doc_ref = db.collection('asset_prices').document(ticker)
-    doc = doc_ref.get()
-    if not doc.exists:
+    user_tickers = get_user_tickers(db, user_id)
+    if ticker not in user_tickers:
         raise HTTPException(status_code=404, detail=f"Asset '{ticker}' not found.")
 
     new_ticker = asset.new_ticker.upper() if asset.new_ticker else None
 
-    # If renaming ticker, create new doc, update trades, delete old doc
     if new_ticker and new_ticker != ticker:
-        new_doc_ref = db.collection('asset_prices').document(new_ticker)
-        if new_doc_ref.get().exists:
+        # Rename: check new ticker not already in user's list
+        if new_ticker in user_tickers:
             raise HTTPException(status_code=409, detail=f"Asset '{new_ticker}' already exists.")
 
-        # Copy data to new doc
-        old_data = doc.to_dict()
-        updates = {k: v for k, v in asset.model_dump().items() if v is not None and k != 'new_ticker'}
-        old_data.update(updates)
-        old_data['ticker'] = new_ticker
-        old_data['last_updated'] = datetime.utcnow()
-        new_doc_ref.set(old_data)
-
-        # Update all trades with the old ticker
+        # Update only this user's trades
         trades_docs = db.collection('trades').where(
+            filter=FieldFilter('user_id', '==', user_id)
+        ).where(
             filter=FieldFilter('ticker', '==', ticker)
         ).stream()
         batch = db.batch()
@@ -666,59 +704,106 @@ def update_asset(ticker: str, asset: schemas.AssetUpdate, db=Depends(get_db)):
         if batch_count > 0:
             batch.commit()
 
-        # Delete old asset doc
-        doc_ref.delete()
+        # Move user's asset_themes doc
+        old_theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
+        old_theme_doc = old_theme_ref.get()
+        theme_data = old_theme_doc.to_dict() if old_theme_doc.exists else {}
+        # Apply any theme updates from this request
+        if asset.primary_theme is not None:
+            theme_data['primary'] = asset.primary_theme
+        if asset.secondary_theme is not None:
+            theme_data['secondary'] = asset.secondary_theme
+        theme_data['ticker'] = new_ticker
+        db.collection('users').document(user_id).collection('asset_themes').document(new_ticker).set(theme_data)
+        if old_theme_doc.exists:
+            old_theme_ref.delete()
 
-        d = new_doc_ref.get().to_dict()
-        if 'last_updated' in d and hasattr(d['last_updated'], 'replace'):
+        # Ensure shared price entry exists for new ticker
+        new_shared_ref = db.collection('asset_prices').document(new_ticker)
+        if not new_shared_ref.get().exists:
+            old_shared = db.collection('asset_prices').document(ticker).get()
+            seed = old_shared.to_dict() if old_shared.exists else {}
+            seed['ticker'] = new_ticker
+            seed['last_updated'] = datetime.utcnow()
+            new_shared_ref.set(seed)
+
+        # Build response
+        price_data = new_shared_ref.get().to_dict() or {}
+        d = {
+            "ticker": new_ticker,
+            "price": price_data.get("price", 0.0),
+            "primary_theme": theme_data.get("primary", ""),
+            "secondary_theme": theme_data.get("secondary", ""),
+            "last_updated": price_data.get("last_updated"),
+            "previous_close": price_data.get("previous_close"),
+            "daily_change": price_data.get("daily_change"),
+            "daily_change_pct": price_data.get("daily_change_pct"),
+            "rsi": price_data.get("rsi"),
+        }
+        if d['last_updated'] and hasattr(d['last_updated'], 'replace'):
             d['last_updated'] = d['last_updated'].replace(tzinfo=None)
         return schemas.Asset(**d)
     else:
-        # Normal update (no rename)
-        updates = {k: v for k, v in asset.model_dump().items() if v is not None and k != 'new_ticker'}
-        updates['last_updated'] = datetime.utcnow()
-        doc_ref.update(updates)
-        d = doc_ref.get().to_dict()
-        if 'last_updated' in d and hasattr(d['last_updated'], 'replace'):
+        # Theme update only — write to user's asset_themes
+        theme_updates = {}
+        if asset.primary_theme is not None:
+            theme_updates['primary'] = asset.primary_theme
+        if asset.secondary_theme is not None:
+            theme_updates['secondary'] = asset.secondary_theme
+        if theme_updates:
+            theme_updates['ticker'] = ticker
+            db.collection('users').document(user_id).collection('asset_themes').document(ticker).set(
+                theme_updates, merge=True
+            )
+
+        # Build response
+        price_doc = db.collection('asset_prices').document(ticker).get()
+        price_data = price_doc.to_dict() if price_doc.exists else {}
+        theme_doc = db.collection('users').document(user_id).collection('asset_themes').document(ticker).get()
+        themes = theme_doc.to_dict() if theme_doc.exists else {}
+        d = {
+            "ticker": ticker,
+            "price": price_data.get("price", 0.0),
+            "primary_theme": themes.get("primary") or price_data.get("primary_theme", ""),
+            "secondary_theme": themes.get("secondary") or price_data.get("secondary_theme", ""),
+            "last_updated": price_data.get("last_updated"),
+            "previous_close": price_data.get("previous_close"),
+            "daily_change": price_data.get("daily_change"),
+            "daily_change_pct": price_data.get("daily_change_pct"),
+            "rsi": price_data.get("rsi"),
+        }
+        if d['last_updated'] and hasattr(d['last_updated'], 'replace'):
             d['last_updated'] = d['last_updated'].replace(tzinfo=None)
         return schemas.Asset(**d)
 
 
 @app.delete("/assets/{ticker}")
-def delete_asset(ticker: str, db=Depends(get_db)):
+def delete_asset(ticker: str, db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Remove asset from user's list. Does NOT delete shared price data."""
     ticker = ticker.upper()
-    doc_ref = db.collection('asset_prices').document(ticker)
-    if not doc_ref.get().exists:
-        raise HTTPException(status_code=404, detail=f"Asset '{ticker}' not found.")
-    doc_ref.delete()
-    return {"message": f"Asset '{ticker}' deleted successfully."}
+    theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
+    if not theme_ref.get().exists:
+        raise HTTPException(status_code=404, detail=f"Asset '{ticker}' not found in your assets.")
+    theme_ref.delete()
+    return {"message": f"Asset '{ticker}' removed from your portfolio."}
 
 
 # ── Theme Management ─────────────────────────────────────────────────
 
 @app.get("/themes/summary")
 def themes_summary(db=Depends(get_db), user_id: str = Depends(get_current_user)):
-    """Return all themes with asset counts."""
+    """Return all themes with asset counts (user-scoped)."""
     primary: dict[str, int] = {}
     secondary: dict[str, int] = {}
 
-    # User-scoped themes if authenticated
-    if user_id != "anonymous":
-        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
-        for doc in docs:
-            d = doc.to_dict()
-            pt = d.get('primary')
-            st = d.get('secondary')
-            if pt: primary[pt] = primary.get(pt, 0) + 1
-            if st: secondary[st] = secondary.get(st, 0) + 1
-    else:
-        docs = db.collection('asset_prices').stream()
-        for doc in docs:
-            d = doc.to_dict()
-            pt = d.get('primary_theme')
-            st = d.get('secondary_theme')
-            if pt: primary[pt] = primary.get(pt, 0) + 1
-            if st: secondary[st] = secondary.get(st, 0) + 1
+    docs = db.collection('users').document(user_id).collection('asset_themes').stream()
+    for doc in docs:
+        d = doc.to_dict()
+        pt = d.get('primary')
+        st = d.get('secondary')
+        if pt: primary[pt] = primary.get(pt, 0) + 1
+        if st: secondary[st] = secondary.get(st, 0) + 1
+
     return {
         "primary": sorted([{"name": k, "count": v} for k, v in primary.items()], key=lambda x: -x["count"]),
         "secondary": sorted([{"name": k, "count": v} for k, v in secondary.items()], key=lambda x: -x["count"]),
@@ -737,26 +822,19 @@ def rename_theme(body: dict, db=Depends(get_db), user_id: str = Depends(get_curr
     if old_name == new_name:
         return {"message": "Names are the same.", "updated": 0}
 
-    # User-scoped theme docs
-    if user_id != "anonymous":
-        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
-    else:
-        docs = db.collection('asset_prices').stream()
+    docs = db.collection('users').document(user_id).collection('asset_themes').stream()
 
     batch = db.batch()
     batch_count = 0
     updated = 0
-    is_user_scoped = user_id != "anonymous"
 
     for doc in docs:
         d = doc.to_dict()
         changes = {}
-        p_key = 'primary' if is_user_scoped else 'primary_theme'
-        s_key = 'secondary' if is_user_scoped else 'secondary_theme'
-        if field in ("primary", "both") and d.get(p_key) == old_name:
-            changes[p_key] = new_name
-        if field in ("secondary", "both") and d.get(s_key) == old_name:
-            changes[s_key] = new_name
+        if field in ("primary", "both") and d.get('primary') == old_name:
+            changes['primary'] = new_name
+        if field in ("secondary", "both") and d.get('secondary') == old_name:
+            changes['secondary'] = new_name
         if changes:
             batch.update(doc.reference, changes)
             batch_count += 1
@@ -784,11 +862,7 @@ def combine_themes(body: dict, db=Depends(get_db), user_id: str = Depends(get_cu
     if source == target:
         return {"message": "Source and target are the same.", "updated": 0}
 
-    is_user_scoped = user_id != "anonymous"
-    if is_user_scoped:
-        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
-    else:
-        docs = db.collection('asset_prices').stream()
+    docs = db.collection('users').document(user_id).collection('asset_themes').stream()
 
     batch = db.batch()
     batch_count = 0
@@ -797,12 +871,10 @@ def combine_themes(body: dict, db=Depends(get_db), user_id: str = Depends(get_cu
     for doc in docs:
         d = doc.to_dict()
         changes = {}
-        p_key = 'primary' if is_user_scoped else 'primary_theme'
-        s_key = 'secondary' if is_user_scoped else 'secondary_theme'
-        if field in ("primary", "both") and d.get(p_key) == source:
-            changes[p_key] = target
-        if field in ("secondary", "both") and d.get(s_key) == source:
-            changes[s_key] = target
+        if field in ("primary", "both") and d.get('primary') == source:
+            changes['primary'] = target
+        if field in ("secondary", "both") and d.get('secondary') == source:
+            changes['secondary'] = target
         if changes:
             batch.update(doc.reference, changes)
             batch_count += 1
@@ -821,11 +893,7 @@ def combine_themes(body: dict, db=Depends(get_db), user_id: str = Depends(get_cu
 @app.delete("/themes/{name}")
 def delete_theme(name: str, field: str = "both", db=Depends(get_db), user_id: str = Depends(get_current_user)):
     """Remove a theme from user's assets."""
-    is_user_scoped = user_id != "anonymous"
-    if is_user_scoped:
-        docs = db.collection('users').document(user_id).collection('asset_themes').stream()
-    else:
-        docs = db.collection('asset_prices').stream()
+    docs = db.collection('users').document(user_id).collection('asset_themes').stream()
 
     batch = db.batch()
     batch_count = 0
@@ -834,12 +902,10 @@ def delete_theme(name: str, field: str = "both", db=Depends(get_db), user_id: st
     for doc in docs:
         d = doc.to_dict()
         changes = {}
-        p_key = 'primary' if is_user_scoped else 'primary_theme'
-        s_key = 'secondary' if is_user_scoped else 'secondary_theme'
-        if field in ("primary", "both") and d.get(p_key) == name:
-            changes[p_key] = ""
-        if field in ("secondary", "both") and d.get(s_key) == name:
-            changes[s_key] = ""
+        if field in ("primary", "both") and d.get('primary') == name:
+            changes['primary'] = ""
+        if field in ("secondary", "both") and d.get('secondary') == name:
+            changes['secondary'] = ""
         if changes:
             batch.update(doc.reference, changes)
             batch_count += 1
@@ -1389,12 +1455,12 @@ def migrate_to_user(db=Depends(get_db), user_id: str = Depends(get_current_user)
 # ── CSV Export (Trades) ───────────────────────────────────────────────
 
 @app.get("/trades/export-csv")
-def export_trades_csv(db=Depends(get_db)):
-    """Export all trades as a CSV file for tax or analytics purposes."""
+def export_trades_csv(db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Export user's trades as a CSV file for tax or analytics purposes."""
     from fastapi.responses import StreamingResponse
     import csv, io
 
-    docs = db.collection('trades').stream()
+    docs = db.collection('trades').where(filter=FieldFilter('user_id', '==', user_id)).stream()
     trades = []
     for doc in docs:
         d = doc.to_dict()
@@ -1406,13 +1472,13 @@ def export_trades_csv(db=Depends(get_db)):
 
     trades.sort(key=lambda t: t.get('date', ''))
 
-    # Fetch asset themes to include in export
+    # Fetch user's asset themes to include in export
     asset_data = {}
-    for doc in db.collection('asset_prices').stream():
+    for doc in db.collection('users').document(user_id).collection('asset_themes').stream():
         ad = doc.to_dict()
-        asset_data[ad.get('ticker')] = {
-            'primary_theme': ad.get('primary_theme', ''),
-            'secondary_theme': ad.get('secondary_theme', ''),
+        asset_data[doc.id] = {
+            'primary_theme': ad.get('primary', ''),
+            'secondary_theme': ad.get('secondary', ''),
         }
 
     output = io.StringIO()
@@ -1455,14 +1521,13 @@ def export_trades_csv(db=Depends(get_db)):
 # ── Export / Restore Backup ───────────────────────────────────────────
 
 @app.get("/backup/export")
-def export_backup(db=Depends(get_db)):
-    """Export all trades and asset data as a single JSON backup file."""
+def export_backup(db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Export user's trades and asset themes as a single JSON backup file."""
 
-    # Export trades
+    # Export user's trades
     trades = []
-    for doc in db.collection('trades').stream():
+    for doc in db.collection('trades').where(filter=FieldFilter('user_id', '==', user_id)).stream():
         d = doc.to_dict()
-        # Convert datetime to ISO string for JSON serialization
         if 'date' in d and hasattr(d['date'], 'isoformat'):
             d['date'] = d['date'].replace(tzinfo=None).isoformat()
         if 'expiration_date' in d and d['expiration_date'] and hasattr(d['expiration_date'], 'isoformat'):
@@ -1470,17 +1535,16 @@ def export_backup(db=Depends(get_db)):
         d['_doc_id'] = doc.id
         trades.append(d)
 
-    # Export assets
+    # Export user's asset themes
     assets = []
-    for doc in db.collection('asset_prices').stream():
+    for doc in db.collection('users').document(user_id).collection('asset_themes').stream():
         d = doc.to_dict()
-        if 'last_updated' in d and d['last_updated'] and hasattr(d['last_updated'], 'isoformat'):
-            d['last_updated'] = d['last_updated'].replace(tzinfo=None).isoformat()
         d['_doc_id'] = doc.id
         assets.append(d)
 
     backup = {
-        "version": 1,
+        "version": 2,
+        "user_id": user_id,
         "exported_at": datetime.utcnow().isoformat(),
         "trades_count": len(trades),
         "assets_count": len(assets),
@@ -1497,23 +1561,24 @@ def export_backup(db=Depends(get_db)):
 
 
 @app.post("/backup/restore")
-async def restore_backup(file: UploadFile = File(...), db=Depends(get_db)):
-    """Restore trades and assets from a JSON backup file. Replaces all existing data."""
+async def restore_backup(file: UploadFile = File(...), db=Depends(get_db), user_id: str = Depends(get_current_user)):
+    """Restore user's trades and asset themes from a JSON backup file."""
     try:
         content = await file.read()
         backup = json.loads(content)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid backup file: {e}")
 
-    if backup.get("version") != 1:
+    version = backup.get("version", 1)
+    if version not in (1, 2):
         raise HTTPException(status_code=400, detail="Unsupported backup version.")
 
     trades_data = backup.get("trades", [])
     assets_data = backup.get("assets", [])
 
-    # --- Delete existing data ---
-    # Delete all trades
-    existing_trades = db.collection('trades').stream()
+    # --- Delete user's existing data only ---
+    # Delete user's trades
+    existing_trades = db.collection('trades').where(filter=FieldFilter('user_id', '==', user_id)).stream()
     batch = db.batch()
     batch_count = 0
     deleted_trades = 0
@@ -1528,12 +1593,12 @@ async def restore_backup(file: UploadFile = File(...), db=Depends(get_db)):
     if batch_count > 0:
         batch.commit()
 
-    # Delete all assets
-    existing_assets = db.collection('asset_prices').stream()
+    # Delete user's asset themes
+    existing_themes = db.collection('users').document(user_id).collection('asset_themes').stream()
     batch = db.batch()
     batch_count = 0
     deleted_assets = 0
-    for doc in existing_assets:
+    for doc in existing_themes:
         batch.delete(doc.reference)
         batch_count += 1
         deleted_assets += 1
@@ -1544,17 +1609,17 @@ async def restore_backup(file: UploadFile = File(...), db=Depends(get_db)):
     if batch_count > 0:
         batch.commit()
 
-    # --- Restore trades ---
+    # --- Restore trades (stamp with user_id) ---
     batch = db.batch()
     batch_count = 0
     restored_trades = 0
     for t in trades_data:
         doc_id = t.pop('_doc_id', None)
-        # Convert ISO date strings back to datetime
         if 'date' in t and isinstance(t['date'], str):
             t['date'] = datetime.fromisoformat(t['date'])
         if 'expiration_date' in t and isinstance(t.get('expiration_date'), str):
             t['expiration_date'] = datetime.fromisoformat(t['expiration_date'])
+        t['user_id'] = user_id
 
         doc_ref = db.collection('trades').document(doc_id) if doc_id else db.collection('trades').document()
         batch.set(doc_ref, t)
@@ -1567,17 +1632,38 @@ async def restore_backup(file: UploadFile = File(...), db=Depends(get_db)):
     if batch_count > 0:
         batch.commit()
 
-    # --- Restore assets ---
+    # --- Restore assets to user-scoped asset_themes ---
     batch = db.batch()
     batch_count = 0
     restored_assets = 0
     for a in assets_data:
         doc_id = a.pop('_doc_id', None)
-        if 'last_updated' in a and isinstance(a.get('last_updated'), str):
-            a['last_updated'] = datetime.fromisoformat(a['last_updated'])
+        a.pop('last_updated', None)  # Not relevant for user themes
+        ticker = doc_id or a.get('ticker', '')
+        if not ticker:
+            continue
 
-        doc_ref = db.collection('asset_prices').document(doc_id or a.get('ticker', ''))
-        batch.set(doc_ref, a)
+        # Version 1 (legacy): fields are primary_theme/secondary_theme in shared format
+        # Version 2 (user-scoped): fields are primary/secondary
+        if version == 1:
+            theme_data = {
+                'ticker': ticker,
+                'primary': a.get('primary_theme', ''),
+                'secondary': a.get('secondary_theme', ''),
+            }
+            # Ensure shared price entry exists for price refresh
+            shared_ref = db.collection('asset_prices').document(ticker)
+            if not shared_ref.get().exists:
+                shared_ref.set({'ticker': ticker, 'price': a.get('price', 0.0), 'last_updated': datetime.utcnow()})
+        else:
+            theme_data = {
+                'ticker': ticker,
+                'primary': a.get('primary', ''),
+                'secondary': a.get('secondary', ''),
+            }
+
+        doc_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
+        batch.set(doc_ref, theme_data)
         batch_count += 1
         restored_assets += 1
         if batch_count >= 400:

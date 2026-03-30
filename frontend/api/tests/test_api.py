@@ -43,6 +43,14 @@ def make_mock_db(trades=None, asset_prices=None):
     trades = trades or []
     asset_prices = asset_prices or []
 
+    # Build lookup dict for per-document reads on asset_prices
+    asset_by_ticker = {}
+    for adoc in asset_prices:
+        d = adoc.to_dict()
+        ticker = d.get('ticker')
+        if ticker:
+            asset_by_ticker[ticker] = adoc
+
     # collection('trades').stream() → list of docs
     trades_col = MagicMock()
     trades_col.stream.return_value = trades
@@ -50,6 +58,19 @@ def make_mock_db(trades=None, asset_prices=None):
 
     prices_col = MagicMock()
     prices_col.stream.return_value = asset_prices
+
+    def _price_document(ticker):
+        doc_mock = MagicMock()
+        if ticker in asset_by_ticker:
+            doc_mock.exists = True
+            doc_mock.to_dict.return_value = asset_by_ticker[ticker].to_dict()
+        else:
+            doc_mock.exists = False
+            doc_mock.to_dict.return_value = None
+        doc_mock.get.return_value = doc_mock
+        return doc_mock
+
+    prices_col.document.side_effect = _price_document
 
     # portfolio_snapshots — return non-existing docs by default
     snapshots_col = MagicMock()
@@ -59,6 +80,14 @@ def make_mock_db(trades=None, asset_prices=None):
     snapshots_col.document.return_value.get.return_value = no_doc
     snapshots_col.stream.return_value = []
 
+    # Mock users collection for asset_themes (empty by default)
+    users_col = MagicMock()
+    user_doc = MagicMock()
+    themes_subcol = MagicMock()
+    themes_subcol.stream.return_value = []
+    user_doc.collection.return_value = themes_subcol
+    users_col.document.return_value = user_doc
+
     def _collection(name):
         if name == "trades":
             return trades_col
@@ -66,6 +95,8 @@ def make_mock_db(trades=None, asset_prices=None):
             return prices_col
         if name == "portfolio_snapshots":
             return snapshots_col
+        if name == "users":
+            return users_col
         return MagicMock()
 
     db.collection.side_effect = _collection

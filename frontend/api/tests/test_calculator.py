@@ -52,17 +52,47 @@ def make_db(trade_docs=None, asset_docs=None):
     trade_docs = trade_docs or []
     asset_docs = asset_docs or []
 
+    # Build lookup dict for individual document .get() calls
+    asset_by_ticker = {}
+    for adoc in asset_docs:
+        ticker = adoc.to_dict().get('ticker')
+        if ticker:
+            asset_by_ticker[ticker] = adoc
+
     trades_col = MagicMock()
     trades_col.stream.return_value = trade_docs
 
     prices_col = MagicMock()
     prices_col.stream.return_value = asset_docs
 
+    def _price_document(ticker):
+        doc_mock = MagicMock()
+        if ticker in asset_by_ticker:
+            doc_mock.exists = True
+            doc_mock.to_dict.return_value = asset_by_ticker[ticker].to_dict()
+        else:
+            doc_mock.exists = False
+            doc_mock.to_dict.return_value = None
+        doc_mock.get.return_value = doc_mock
+        return doc_mock
+
+    prices_col.document.side_effect = _price_document
+
+    # Mock users collection for asset_themes (empty by default)
+    users_col = MagicMock()
+    user_doc = MagicMock()
+    themes_subcol = MagicMock()
+    themes_subcol.stream.return_value = []
+    user_doc.collection.return_value = themes_subcol
+    users_col.document.return_value = user_doc
+
     def _collection(name):
         if name == "trades":
             return trades_col
         if name == "asset_prices":
             return prices_col
+        if name == "users":
+            return users_col
         return MagicMock()
 
     db.collection.side_effect = _collection

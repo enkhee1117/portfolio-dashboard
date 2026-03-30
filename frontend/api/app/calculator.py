@@ -55,16 +55,19 @@ def calculate_portfolio(db, user_id: str = "anonymous"):
                     positions[ticker]["quantity"] = 0.0
                     positions[ticker]["cost_basis"] = 0.0
 
-    # Fetch current prices (shared)
-    price_docs = db.collection('asset_prices').stream()
+    # Fetch current prices for user's tickers only (from shared price cache)
     asset_data = {}
-    for doc in price_docs:
-        d = doc.to_dict()
-        asset_data[d.get('ticker')] = {
-            'price': d.get('price', 0.0),
-            'primary': d.get('primary_theme'),  # fallback themes
-            'secondary': d.get('secondary_theme')
-        }
+    for ticker in positions.keys():
+        price_doc = db.collection('asset_prices').document(ticker).get()
+        if price_doc.exists:
+            d = price_doc.to_dict()
+            asset_data[ticker] = {
+                'price': d.get('price', 0.0),
+                'primary': d.get('primary_theme'),  # fallback themes from shared
+                'secondary': d.get('secondary_theme')
+            }
+        else:
+            asset_data[ticker] = {'price': 0.0, 'primary': None, 'secondary': None}
 
     # Override with user-scoped themes if authenticated
     if user_id != "anonymous":

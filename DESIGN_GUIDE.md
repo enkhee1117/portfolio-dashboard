@@ -24,8 +24,16 @@ Price Data: Yahoo Finance (yfinance), auto-refreshed daily 5:30 PM ET
 | Collection | Doc ID | Purpose | User-scoped |
 |---|---|---|---|
 | `trades` | auto-generated | Individual buy/sell transactions | Yes (`user_id` field) |
-| `asset_prices` | ticker (e.g. "AAPL") | Current price, themes, daily change, RSI | No (shared) |
+| `asset_prices` | ticker (e.g. "AAPL") | **Shared price cache** — price, daily change, RSI. Written only by price refresh. | No (shared) |
+| `users/{uid}/asset_themes` | ticker | **User's asset registry** — themes, manual additions. User CRUD operates here. | Yes |
 | `price_history` | `{ticker}_{date}` | Historical OHLCV for analytics | No (shared) |
+| `price_series` | ticker | Consolidated historical closing prices | No (shared) |
+
+**Data isolation rules:**
+- A user's visible asset list = tickers from their trades + tickers in their `asset_themes`
+- No user action ever deletes from shared `asset_prices` — it's a price cache for all users
+- Theme assignments are per-user in `asset_themes` (fields: `primary`, `secondary`)
+- Backup/restore only touches the user's own trades and `asset_themes`
 
 ### Frontend pages
 

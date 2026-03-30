@@ -154,16 +154,26 @@ def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False, 
                     if s_theme == 'nan': s_theme = None
 
                     if price_val > 0:
-                        doc_ref = db.collection('asset_prices').document(ticker)
-                        batch.set(doc_ref, {
-                            'ticker': ticker,
-                            'price': price_val,
-                            'primary_theme': p_theme,
-                            'secondary_theme': s_theme,
-                            'last_updated': datetime.utcnow()
-                        })
-                        batch_count += 1
-                        
+                        # Ensure shared price entry exists (for price refresh)
+                        shared_ref = db.collection('asset_prices').document(ticker)
+                        if not shared_ref.get().exists:
+                            batch.set(shared_ref, {
+                                'ticker': ticker,
+                                'price': price_val,
+                                'last_updated': datetime.utcnow()
+                            })
+                            batch_count += 1
+
+                        # Write themes to user-scoped asset_themes
+                        if user_id and user_id != "anonymous":
+                            theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
+                            batch.set(theme_ref, {
+                                'ticker': ticker,
+                                'primary': p_theme or '',
+                                'secondary': s_theme or '',
+                            }, merge=True)
+                            batch_count += 1
+
                         if batch_count >= 400:
                             batch.commit()
                             batch = db.batch()

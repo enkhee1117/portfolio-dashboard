@@ -8,7 +8,9 @@ import io
 from unittest.mock import MagicMock, call
 from datetime import datetime
 from fastapi.testclient import TestClient
-from app.main import app, get_db
+from app.main import app, get_db, get_current_user
+
+TEST_USER_ID = "test-user-123"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -30,38 +32,48 @@ def make_trade_doc(doc_id, ticker, side, price, quantity, date=None):
         "expiration_date": None,
         "strike_price": None,
         "option_type": None,
+        "user_id": TEST_USER_ID,
     }
     return doc
 
 
-def make_asset_doc(ticker, price, primary_theme, secondary_theme):
+def make_asset_theme_doc(ticker, primary, secondary):
+    """Create a mock for user-scoped asset_themes subcollection."""
     doc = MagicMock()
     doc.id = ticker
     doc.reference = MagicMock()
     doc.to_dict.return_value = {
         "ticker": ticker,
-        "price": price,
-        "primary_theme": primary_theme,
-        "secondary_theme": secondary_theme,
-        "last_updated": datetime(2025, 3, 1),
+        "primary": primary,
+        "secondary": secondary,
     }
     return doc
 
 
-def make_mock_db(trade_docs=None, asset_docs=None):
+def make_mock_db(trade_docs=None, asset_theme_docs=None):
     db = MagicMock()
     trade_docs = trade_docs or []
-    asset_docs = asset_docs or []
+    asset_theme_docs = asset_theme_docs or []
 
     trades_col = MagicMock()
     trades_col.stream.return_value = trade_docs
+    trades_col.where.return_value = trades_col
+
+    # User-scoped asset_themes subcollection
+    users_col = MagicMock()
+    user_doc = MagicMock()
+    themes_subcol = MagicMock()
+    themes_subcol.stream.return_value = asset_theme_docs
+    user_doc.collection.return_value = themes_subcol
+    users_col.document.return_value = user_doc
 
     prices_col = MagicMock()
-    prices_col.stream.return_value = asset_docs
 
     def _collection(name):
         if name == "trades":
             return trades_col
+        if name == "users":
+            return users_col
         if name == "asset_prices":
             return prices_col
         return MagicMock()
@@ -78,6 +90,13 @@ def make_mock_db(trade_docs=None, asset_docs=None):
 def mock_firebase(monkeypatch):
     monkeypatch.setattr("firebase_admin._apps", {"default": True})
 
+@pytest.fixture(autouse=True)
+def override_auth():
+    """Override auth dependency so backup tests don't need real tokens."""
+    app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
+
 
 SAMPLE_TRADES = [
     make_trade_doc("t1", "AAPL", "Buy", 150.0, 10, datetime(2025, 1, 1)),
@@ -86,8 +105,8 @@ SAMPLE_TRADES = [
 ]
 
 SAMPLE_ASSETS = [
-    make_asset_doc("AAPL", 175.0, "AI", "Technology"),
-    make_asset_doc("GOOG", 210.0, "AI", "Technology"),
+    make_asset_theme_doc("AAPL", "AI", "Technology"),
+    make_asset_theme_doc("GOOG", "AI", "Technology"),
 ]
 
 
@@ -96,7 +115,7 @@ SAMPLE_ASSETS = [
 class TestExport:
     def test_export_returns_json_with_all_data(self):
         """Export should return trades and assets in a structured JSON."""
-        db = make_mock_db(trade_docs=SAMPLE_TRADES, asset_docs=SAMPLE_ASSETS)
+        db = make_mock_db(trade_docs=SAMPLE_TRADES, asset_theme_docs=SAMPLE_ASSETS)
         app.dependency_overrides[get_db] = lambda: db
         client = TestClient(app)
 
@@ -104,7 +123,7 @@ class TestExport:
         assert resp.status_code == 200
 
         data = resp.json()
-        assert data["version"] == 1
+        assert data["version"] == 2
         assert "exported_at" in data
         assert data["trades_count"] == 3
         assert data["assets_count"] == 2
@@ -115,7 +134,7 @@ class TestExport:
 
     def test_export_preserves_doc_ids(self):
         """Each exported record should include its Firestore document ID."""
-        db = make_mock_db(trade_docs=SAMPLE_TRADES, asset_docs=SAMPLE_ASSETS)
+        db = make_mock_db(trade_docs=SAMPLE_TRADES, asset_theme_docs=SAMPLE_ASSETS)
         app.dependency_overrides[get_db] = lambda: db
         client = TestClient(app)
 
@@ -131,7 +150,7 @@ class TestExport:
 
     def test_export_trade_fields(self):
         """Exported trades should contain all required fields."""
-        db = make_mock_db(trade_docs=SAMPLE_TRADES[:1], asset_docs=[])
+        db = make_mock_db(trade_docs=SAMPLE_TRADES[:1], asset_theme_docs=[])
         app.dependency_overrides[get_db] = lambda: db
         client = TestClient(app)
 
@@ -151,7 +170,7 @@ class TestExport:
 
     def test_export_asset_fields(self):
         """Exported assets should contain ticker, price, and themes."""
-        db = make_mock_db(trade_docs=[], asset_docs=SAMPLE_ASSETS[:1])
+        db = make_mock_db(trade_docs=[], asset_theme_docs=SAMPLE_ASSETS[:1])
         app.dependency_overrides[get_db] = lambda: db
         client = TestClient(app)
 
@@ -159,16 +178,15 @@ class TestExport:
         asset = data["assets"][0]
 
         assert asset["ticker"] == "AAPL"
-        assert asset["price"] == 175.0
-        assert asset["primary_theme"] == "AI"
-        assert asset["secondary_theme"] == "Technology"
+        assert asset["primary"] == "AI"
+        assert asset["secondary"] == "Technology"
         assert asset["_doc_id"] == "AAPL"
 
         app.dependency_overrides.clear()
 
     def test_export_dates_are_iso_strings(self):
         """Dates should be serialized as ISO strings for JSON compatibility."""
-        db = make_mock_db(trade_docs=SAMPLE_TRADES[:1], asset_docs=SAMPLE_ASSETS[:1])
+        db = make_mock_db(trade_docs=SAMPLE_TRADES[:1], asset_theme_docs=SAMPLE_ASSETS[:1])
         app.dependency_overrides[get_db] = lambda: db
         client = TestClient(app)
 
@@ -215,10 +233,10 @@ class TestExport:
 # ── Restore Tests ────────────────────────────────────────────────────────────
 
 class TestRestore:
-    def _make_backup_json(self, trades=None, assets=None):
+    def _make_backup_json(self, trades=None, assets=None, version=1):
         """Create a valid backup JSON payload."""
         backup = {
-            "version": 1,
+            "version": version,
             "exported_at": "2025-03-01T12:00:00",
             "trades_count": len(trades or []),
             "assets_count": len(assets or []),
@@ -227,25 +245,36 @@ class TestRestore:
         }
         return json.dumps(backup).encode("utf-8")
 
-    def _make_restore_db(self, existing_trade_docs=None, existing_asset_docs=None):
+    def _make_restore_db(self, existing_trade_docs=None, existing_theme_docs=None):
         """Build a mock DB that tracks batch operations for verification."""
         db = MagicMock()
         existing_trade_docs = existing_trade_docs or []
-        existing_asset_docs = existing_asset_docs or []
+        existing_theme_docs = existing_theme_docs or []
 
         trades_col = MagicMock()
         trades_col.stream.return_value = existing_trade_docs
+        trades_col.where.return_value = trades_col
         trades_col.document.return_value = MagicMock()
 
         prices_col = MagicMock()
-        prices_col.stream.return_value = existing_asset_docs
         prices_col.document.return_value = MagicMock()
+
+        # User-scoped asset_themes subcollection
+        users_col = MagicMock()
+        user_doc = MagicMock()
+        themes_subcol = MagicMock()
+        themes_subcol.stream.return_value = existing_theme_docs
+        themes_subcol.document.return_value = MagicMock()
+        user_doc.collection.return_value = themes_subcol
+        users_col.document.return_value = user_doc
 
         def _collection(name):
             if name == "trades":
                 return trades_col
             if name == "asset_prices":
                 return prices_col
+            if name == "users":
+                return users_col
             return MagicMock()
 
         db.collection.side_effect = _collection
@@ -286,8 +315,8 @@ class TestRestore:
     def test_restore_deletes_existing_data_first(self):
         """Restore should delete all existing trades and assets before writing."""
         existing_trades = [make_trade_doc(f"old-{i}", "OLD", "Buy", 10, 1) for i in range(3)]
-        existing_assets = [make_asset_doc("OLD", 10, "X", "Y")]
-        db = self._make_restore_db(existing_trades, existing_assets)
+        existing_themes = [make_asset_theme_doc("OLD", "X", "Y")]
+        db = self._make_restore_db(existing_trades, existing_themes)
         app.dependency_overrides[get_db] = lambda: db
         client = TestClient(app)
 
@@ -402,7 +431,7 @@ class TestRoundTrip:
     def test_export_format_is_restorable(self):
         """The JSON structure from export should be accepted by restore."""
         # Export
-        db_export = make_mock_db(trade_docs=SAMPLE_TRADES, asset_docs=SAMPLE_ASSETS)
+        db_export = make_mock_db(trade_docs=SAMPLE_TRADES, asset_theme_docs=SAMPLE_ASSETS)
         app.dependency_overrides[get_db] = lambda: db_export
         client = TestClient(app)
 
@@ -411,7 +440,7 @@ class TestRoundTrip:
         exported = export_resp.json()
 
         # Verify the export is valid for restore
-        assert exported["version"] == 1
+        assert exported["version"] == 2
         assert len(exported["trades"]) == 3
         assert len(exported["assets"]) == 2
 
@@ -429,16 +458,25 @@ class TestRoundTrip:
         db_restore = MagicMock()
         trades_col = MagicMock()
         trades_col.stream.return_value = []
+        trades_col.where.return_value = trades_col
         trades_col.document.return_value = MagicMock()
         prices_col = MagicMock()
-        prices_col.stream.return_value = []
         prices_col.document.return_value = MagicMock()
+        users_col = MagicMock()
+        user_doc = MagicMock()
+        themes_subcol = MagicMock()
+        themes_subcol.stream.return_value = []
+        themes_subcol.document.return_value = MagicMock()
+        user_doc.collection.return_value = themes_subcol
+        users_col.document.return_value = user_doc
 
         def _col(name):
             if name == "trades":
                 return trades_col
             if name == "asset_prices":
                 return prices_col
+            if name == "users":
+                return users_col
             return MagicMock()
 
         db_restore.collection.side_effect = _col
