@@ -41,7 +41,27 @@ function PortfolioContent() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
 
-  useEscape(editingTrade ? () => setEditingTrade(null) : null);
+  // Asset detail modal (trade history for any ticker)
+  const [detailTicker, setDetailTicker] = useState<string | null>(null);
+  const [detailTrades, setDetailTrades] = useState<Trade[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openTickerDetail = (ticker: string) => {
+    setDetailTicker(ticker);
+    setDetailLoading(true);
+    setDetailTrades([]);
+    fetch("/api/trades")
+      .then((r) => r.json())
+      .then((allTrades: Trade[]) => {
+        setDetailTrades(
+          allTrades.filter((t) => t.ticker === ticker).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        );
+      })
+      .catch(console.error)
+      .finally(() => setDetailLoading(false));
+  };
+
+  useEscape(detailTicker ? () => setDetailTicker(null) : editingTrade ? () => setEditingTrade(null) : null);
 
   useEffect(() => {
     fetch("/api/portfolio")
@@ -353,13 +373,13 @@ function PortfolioContent() {
                           && (!secondaryFilter || a.secondary_theme === secondaryFilter);
                       })
                       .map((asset) => (
-                        <tr key={asset.ticker} className="hover:bg-gray-700/50 transition-colors">
+                        <tr key={asset.ticker} onClick={() => openTickerDetail(asset.ticker)} className="hover:bg-gray-700/50 transition-colors cursor-pointer">
                           <td className="px-4 py-2.5 font-medium text-white">{asset.ticker}</td>
                           <td className="px-4 py-2.5">
-                            <button onClick={() => setPrimaryFilter(asset.primary_theme)} className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-900/60 transition-colors">{asset.primary_theme}</button>
+                            <button onClick={(e) => { e.stopPropagation(); setPrimaryFilter(asset.primary_theme); }} className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-900/60 transition-colors">{asset.primary_theme}</button>
                           </td>
                           <td className="px-4 py-2.5">
-                            <button onClick={() => setSecondaryFilter(asset.secondary_theme)} className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300 border border-cyan-700/50 hover:bg-cyan-900/60 transition-colors">{asset.secondary_theme}</button>
+                            <button onClick={(e) => { e.stopPropagation(); setSecondaryFilter(asset.secondary_theme); }} className="px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300 border border-cyan-700/50 hover:bg-cyan-900/60 transition-colors">{asset.secondary_theme}</button>
                           </td>
                           <td className="px-4 py-2.5 text-right text-gray-300">${asset.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           <td className="px-4 py-2.5 text-right">
@@ -371,7 +391,8 @@ function PortfolioContent() {
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             <button
-                              onClick={async () => {
+                              onClick={async (e) => {
+                                e.stopPropagation();
                                 if (!confirm(`Remove "${asset.ticker}" from asset list?\n\nTrade history will be preserved.`)) return;
                                 try {
                                   const res = await fetch(`/api/assets/${asset.ticker}`, { method: "DELETE" });
@@ -396,6 +417,61 @@ function PortfolioContent() {
           )
         )}
       </div>
+
+      {/* Ticker Detail Modal (trade history) */}
+      {detailTicker && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+          onClick={(e) => { if (e.target === e.currentTarget) setDetailTicker(null); }}>
+          <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 w-full max-w-4xl max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center p-6 pb-4 border-b border-gray-700">
+              <div>
+                <h2 className="text-xl font-bold text-white">{detailTicker}</h2>
+                <p className="text-xs text-gray-400 mt-1">{detailTrades.length} trades</p>
+              </div>
+              <button onClick={() => setDetailTicker(null)} className="text-gray-400 hover:text-white text-xl px-2 hover:bg-gray-700 rounded">&times;</button>
+            </div>
+            <div className="flex-1 overflow-auto p-6 pt-4">
+              {detailLoading ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500" />
+                </div>
+              ) : detailTrades.length === 0 ? (
+                <p className="text-gray-500 text-sm italic py-4">No trades found for {detailTicker}.</p>
+              ) : (
+                <table className="min-w-full text-left text-sm whitespace-nowrap">
+                  <thead className="text-gray-500 uppercase tracking-wider text-xs sticky top-0 bg-gray-800">
+                    <tr>
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Side</th>
+                      <th className="px-3 py-2 text-right">Qty</th>
+                      <th className="px-3 py-2 text-right">Price</th>
+                      <th className="px-3 py-2 text-right">Total</th>
+                      <th className="px-3 py-2 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700/50">
+                    {detailTrades.map((t, i) => (
+                      <tr key={t.id || i} className="hover:bg-gray-700/30">
+                        <td className="px-3 py-2 text-gray-300">{new Date(t.date).toLocaleDateString()}</td>
+                        <td className={`px-3 py-2 font-semibold ${t.side === "Buy" ? "text-green-400" : "text-red-400"}`}>{t.side}</td>
+                        <td className="px-3 py-2 text-right text-gray-300">{t.quantity.toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right text-gray-300">${t.price.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right text-white font-medium">${(t.quantity * t.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2 text-center">
+                          {t.is_wash_sale && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-red-600 text-red-100 rounded cursor-help"
+                              title="IRS Wash Sale: sold at a loss and repurchased within 30 days.">WASH</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Trade Modal */}
       {editingTrade && (
