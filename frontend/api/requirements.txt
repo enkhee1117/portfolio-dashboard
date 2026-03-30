@@ -4,5 +4,3 @@ google-cloud-firestore
 pandas
 pydantic
 yfinance
-httpx
-apscheduler
