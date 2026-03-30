@@ -1410,6 +1410,13 @@ def migrate_to_user(db=Depends(get_db), user_id: str = Depends(get_current_user)
         batch.commit()
 
     # 2. Copy themes from asset_prices to user's asset_themes subcollection
+    # First, get all tickers the user has trades for
+    user_tickers = set()
+    for doc in db.collection('trades').where(filter=FieldFilter('user_id', '==', user_id)).stream():
+        t = doc.to_dict().get('ticker')
+        if t:
+            user_tickers.add(t)
+
     assets = db.collection('asset_prices').stream()
     batch = db.batch()
     batch_count = 0
@@ -1419,7 +1426,8 @@ def migrate_to_user(db=Depends(get_db), user_id: str = Depends(get_current_user)
         ticker = d.get('ticker', doc.id)
         p_theme = d.get('primary_theme')
         s_theme = d.get('secondary_theme')
-        if p_theme or s_theme:
+        # Migrate if asset has themes OR user has trades for it
+        if p_theme or s_theme or ticker in user_tickers:
             theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker)
             batch.set(theme_ref, {
                 'ticker': ticker,
