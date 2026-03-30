@@ -462,6 +462,34 @@ npx vitest            # watch mode
 | Trade CRUD (10 trades/day) | ~100 | ~10 | ~$0.01 |
 | **Total** | **~2,600** | **~1,275** | **~$1/month** |
 
+### Performance monitoring (3 layers)
+
+**Layer 1 — Backend request timing** (`main.py` PerformanceMiddleware)
+- Logs warnings for requests >2s (general) or >500ms (trade CRUD)
+- Adds `X-Response-Time-Ms` header to every response
+- Frontend reads this header to detect slow server responses
+
+**Layer 2 — Firestore budget tests** (`tests/test_performance.py`)
+- Tests that assert Firestore operation counts per code path
+- `TestPortfolioBudget`: cache hit = 1 read, cache miss = ≤5 reads
+- `TestDeltaUpdateBudget`: delta update = ≤15 reads + 1 write
+- `TestRecomputeTickerBudget`: per-ticker replay = ≤2 streams + ≤3 reads
+- **Runs in CI** — breaks the build if an endpoint gets expensive
+
+**Layer 3 — Frontend API timing** (`lib/api.ts`)
+- Logs `[SLOW API]` warning for requests >2s (general) or >500ms (CRUD)
+- Reads `X-Response-Time-Ms` header to separately log server-side slowness
+- Visible in browser console during development
+
+**Performance budgets (enforce in tests):**
+| Code path | Max reads | Max writes | Max streams |
+|---|---|---|---|
+| GET /portfolio (cache hit) | 1 | 0 | 0 |
+| GET /portfolio (cache miss) | ≤ T+5 (T=tickers) | 1 | 2 |
+| Trade CRUD delta update | ≤15 | 1 | 2 |
+| Per-ticker recompute | ≤3 | 0 | 2 |
+| GET /assets | 0 | 0 | 1 (+batch read) |
+
 ### Future optimizations (not yet needed)
 - **Redis/in-memory cache** for `asset_prices` reads if Firestore costs become significant
 - **WebSocket push** for real-time price updates to connected clients

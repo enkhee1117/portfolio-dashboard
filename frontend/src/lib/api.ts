@@ -1,14 +1,20 @@
 import { auth } from "./firebase";
 
+// Threshold for logging slow requests (ms)
+const SLOW_REQUEST_MS = 2000;
+const SLOW_CRUD_MS = 500;
+
 /**
  * Authenticated API call wrapper.
  * Attaches Firebase Auth ID token as Bearer token to every request.
- * Falls back to unauthenticated for public endpoints.
+ * Logs slow requests in development for performance monitoring.
  */
 export async function apiCall(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<Response> {
+  const start = performance.now();
+
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> || {}),
   };
@@ -25,8 +31,30 @@ export async function apiCall(
     headers["Content-Type"] = "application/json";
   }
 
-  return fetch(endpoint, {
+  const response = await fetch(endpoint, {
     ...options,
     headers,
   });
+
+  // Performance monitoring: log slow requests
+  const duration = Math.round(performance.now() - start);
+  const method = options.method || "GET";
+  const isCrud = method !== "GET" && (endpoint.includes("/trades") || endpoint.includes("/assets"));
+  const threshold = isCrud ? SLOW_CRUD_MS : SLOW_REQUEST_MS;
+
+  if (duration > threshold) {
+    console.warn(
+      `[SLOW API] ${method} ${endpoint} took ${duration}ms (threshold: ${threshold}ms, status: ${response.status})`
+    );
+  }
+
+  // Read server-side timing header if available
+  const serverTime = response.headers.get("X-Response-Time-Ms");
+  if (serverTime && parseInt(serverTime) > threshold) {
+    console.warn(
+      `[SLOW SERVER] ${method} ${endpoint} server took ${serverTime}ms`
+    );
+  }
+
+  return response;
 }

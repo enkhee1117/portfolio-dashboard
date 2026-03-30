@@ -544,6 +544,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── Performance Monitoring Middleware ─────────────────────────────────
+import time
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+# Thresholds — requests exceeding these log a warning
+SLOW_REQUEST_MS = 2000  # Warn if request takes >2 seconds
+SLOW_CRUD_MS = 500      # Warn if trade CRUD takes >500ms
+
+CRUD_PATHS = {"/trades/manual", "/trades/"}  # Paths that should be fast
+
+class PerformanceMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        response = await call_next(request)
+        duration_ms = (time.time() - start) * 1000
+
+        path = request.url.path
+        method = request.method
+
+        # Determine threshold
+        is_crud = any(path.startswith(p) or path.endswith(p.rstrip('/')) for p in CRUD_PATHS)
+        threshold = SLOW_CRUD_MS if is_crud and method in ("POST", "PUT", "DELETE") else SLOW_REQUEST_MS
+
+        if duration_ms > threshold:
+            logger.warning(
+                f"SLOW REQUEST: {method} {path} took {duration_ms:.0f}ms "
+                f"(threshold: {threshold}ms) status={response.status_code}"
+            )
+        elif duration_ms > 500:
+            logger.info(f"{method} {path} {duration_ms:.0f}ms")
+
+        # Add timing header for frontend to read
+        response.headers["X-Response-Time-Ms"] = str(int(duration_ms))
+        return response
+
+app.add_middleware(PerformanceMiddleware)
+
 def _init_firebase():
     import firebase_admin
     from firebase_admin import credentials
