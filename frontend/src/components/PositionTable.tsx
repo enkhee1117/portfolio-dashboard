@@ -63,18 +63,14 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
     [positions]
   );
 
-  // Fetch trades for a ticker when modal opens
+  // Fetch trades for a specific ticker (server-side filtered, not all trades)
   const openStockDetail = (ticker: string) => {
     setSelectedTicker(ticker);
     setLoadingTrades(true);
     setTickerTrades([]);
-    apiCall("/api/trades")
-      .then((r) => r.json())
-      .then((allTrades: Trade[]) => {
-        const filtered = allTrades
-          .filter((t) => t.ticker === ticker)
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        setTickerTrades(filtered);
+    apiCall(`/api/trades?ticker=${encodeURIComponent(ticker)}&limit=0`)
+      .then(async (r) => {
+        if (r.ok) setTickerTrades(await r.json());
       })
       .catch(console.error)
       .finally(() => setLoadingTrades(false));
