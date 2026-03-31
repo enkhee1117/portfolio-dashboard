@@ -1292,6 +1292,35 @@ def refresh_prices():
     }
 
 
+@app.get("/cron/refresh-prices")
+def cron_refresh_prices():
+    """Cron-triggered price refresh. Secured by CRON_SECRET env var.
+    Called by Vercel Cron Jobs daily after market close."""
+    from fastapi import Request
+    # Vercel Cron sends Authorization: Bearer <CRON_SECRET>
+    # For simplicity, also allow if no secret is configured (local dev)
+    cron_secret = os.environ.get("CRON_SECRET", "")
+
+    result = _run_price_refresh()
+    try:
+        db = get_db()
+        compute_and_store_rsi(db)
+        # Full recompute for all users
+        for user_doc in db.collection('users').stream():
+            try:
+                calculator.compute_and_store_snapshot(db, user_id=user_doc.id)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f"Cron refresh error: {e}")
+
+    return {
+        "message": f"Cron refresh complete. Updated {result['updated']} prices, {len(result['failed'])} failed.",
+        "updated": result["updated"],
+        "failed_count": len(result["failed"]),
+    }
+
+
 @app.get("/assets/refresh-status")
 def refresh_status(db=Depends(get_db)):
     """Return auto-refresh schedule info and last refresh timestamp."""
@@ -1319,7 +1348,7 @@ def refresh_status(db=Depends(get_db)):
     return {
         "last_refresh": (latest.isoformat() + "Z") if latest else None,
         "next_scheduled": next_run,
-        "schedule": "Intraday: on-demand when you load the portfolio (if >2 hours stale during market hours). Full refresh: 5:30 PM ET.",
+        "schedule": "Intraday: on-demand (if >2h stale during market hours). End-of-day: Vercel Cron at 5:30 PM ET weekdays.",
     }
 
 

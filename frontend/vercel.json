@@ -4,5 +4,11 @@
       "source": "/api/:path*",
       "destination": "/api/index.py"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/refresh-prices",
+      "schedule": "30 22 * * 1-5"
+    }
   ]
 }
