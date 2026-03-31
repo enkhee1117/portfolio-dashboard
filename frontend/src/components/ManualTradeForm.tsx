@@ -31,13 +31,22 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
   const { user } = useAuth();
   const toast = useToast();
 
-  // Fetch assets and themes when auth is ready
+  // Fetch assets when auth is ready, derive themes client-side
   useEffect(() => {
     if (!user) return;
-    Promise.all([apiCall("/api/assets"), apiCall("/api/assets/themes")])
-      .then(async ([aRes, tRes]) => {
-        if (aRes.ok) setAssets(await aRes.json());
-        if (tRes.ok) setThemes(await tRes.json());
+    apiCall("/api/assets")
+      .then(async (r) => {
+        if (r.ok) {
+          const data = await r.json();
+          setAssets(data);
+          const primary = new Set<string>();
+          const secondary = new Set<string>();
+          data.forEach((a: any) => {
+            if (a.primary_theme) primary.add(a.primary_theme);
+            if (a.secondary_theme) secondary.add(a.secondary_theme);
+          });
+          setThemes({ primary: [...primary].sort(), secondary: [...secondary].sort() });
+        }
       })
       .catch(console.error);
   }, [user]);

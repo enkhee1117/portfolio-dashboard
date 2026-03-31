@@ -83,10 +83,14 @@ export default function Home() {
       setShowMissing(false);
       return;
     }
-    try {
-      const res = await apiCall('/api/assets/themes');
-      if (res.ok) setThemes(await res.json());
-    } catch {}
+    // Derive themes from already-loaded assets instead of a separate API call
+    const primary = new Set<string>();
+    const secondary = new Set<string>();
+    assets.forEach(a => {
+      if (a.primary_theme) primary.add(a.primary_theme);
+      if (a.secondary_theme) secondary.add(a.secondary_theme);
+    });
+    setThemes({ primary: [...primary].sort(), secondary: [...secondary].sort() });
     // Init fix forms for each unassigned ticker
     const forms: Record<string, { primary: string; secondary: string }> = {};
     unassignedPositions.forEach(p => {
