@@ -186,13 +186,16 @@ def get_last_trading_day() -> str:
 # ── Scheduled Price Refresh ───────────────────────────────────────────
 
 def _get_active_tickers(db) -> list[str]:
-    """Return tickers that at least one user holds (from trades), plus any in asset_prices.
-    This avoids refreshing orphaned tickers nobody cares about."""
+    """Return all tickers that need price updates: from trades + existing asset_prices.
+    Includes all asset_prices entries so end-of-day refresh covers everything for RSI."""
     tickers = set()
     for doc in db.collection('trades').stream():
         t = doc.to_dict().get('ticker')
         if t:
             tickers.add(t)
+    # Also include existing asset_prices (some may not have trades but need RSI/history)
+    for doc in db.collection('asset_prices').stream():
+        tickers.add(doc.id)
     return sorted(tickers)
 
 
@@ -272,13 +275,14 @@ def _run_price_refresh():
 
             if close_price > 0 and not math.isnan(close_price):
                 doc_ref = db.collection('asset_prices').document(ticker)
-                asset_batch.update(doc_ref, {
+                asset_batch.set(doc_ref, {
+                    "ticker": ticker,
                     "price": round(close_price, 2),
                     "previous_close": round(prev_close, 2) if prev_close and not math.isnan(prev_close) else None,
                     "daily_change": daily_change,
                     "daily_change_pct": daily_change_pct,
                     "last_updated": now,
-                })
+                }, merge=True)
                 asset_batch_count += 1
 
                 history_doc_id = f"{ticker}_{latest_date}"
