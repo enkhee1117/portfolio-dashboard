@@ -17,6 +17,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
     side: "Buy",
     price: "",
     quantity: "",
+    fees: "",
     currency: "USD",
   });
   const [loading, setLoading] = useState(false);
@@ -126,6 +127,7 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
           ...formData,
           price: parseFloat(formData.price),
           quantity: parseFloat(formData.quantity),
+          fees: parseFloat(formData.fees) || 0,
         }),
       });
 
@@ -241,6 +243,18 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
               onChange={handleChange}
               className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
               required
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Fees</label>
+            <input
+              type="number"
+              step="0.01"
+              name="fees"
+              placeholder="0.00"
+              value={formData.fees}
+              onChange={handleChange}
+              className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:border-indigo-500 focus:outline-none"
             />
           </div>
         </div>

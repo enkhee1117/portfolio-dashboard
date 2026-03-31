@@ -5,6 +5,7 @@ import { auth } from "../../lib/firebase";
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   GoogleAuthProvider,
   signInWithPopup,
 } from "firebase/auth";
@@ -18,6 +19,7 @@ export default function LoginPage() {
   const [isSignup, setIsSignup] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const router = useRouter();
   const { user } = useAuth();
 
@@ -49,6 +51,26 @@ export default function LoginPage() {
     }
   };
 
+  const handleResetPassword = async () => {
+    if (!email) {
+      setError("Enter your email address first.");
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetSent(true);
+    } catch (err: any) {
+      const msg = err.code === "auth/user-not-found" ? "No account found with this email."
+        : err.code === "auth/invalid-email" ? "Invalid email address."
+        : err.message;
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleGoogle = async () => {
     setError("");
     try {
@@ -73,6 +95,11 @@ export default function LoginPage() {
         </div>
 
         <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-xl">
+          {resetSent && (
+            <div className="mb-4 p-3 bg-green-900/20 border border-green-700/50 rounded-lg text-sm text-green-300">
+              Password reset email sent to {email}. Check your inbox.
+            </div>
+          )}
           {error && (
             <div className="mb-4 p-3 bg-red-900/20 border border-red-700/50 rounded-lg text-sm text-red-300">
               {error}
@@ -92,7 +119,14 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Password</label>
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-xs text-gray-400">Password</label>
+                {!isSignup && (
+                  <button type="button" onClick={handleResetPassword} className="text-xs text-indigo-400 hover:text-indigo-300">
+                    Forgot password?
+                  </button>
+                )}
+              </div>
               <input
                 type="password"
                 value={password}

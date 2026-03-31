@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import ManualTradeForm from '../components/ManualTradeForm';
 import ThemeAnalysis from '../components/ThemeAnalysis';
 import PortfolioChart from '../components/PortfolioChart';
-import { PortfolioSnapshot, ThemeLists, Asset } from './types';
+import { PortfolioSnapshot, ThemeLists, Asset, Trade } from './types';
 import { useToast } from '../components/Toast';
 import { apiCall } from "../lib/api";
 import { useAuth } from "../lib/AuthContext";
@@ -13,6 +13,7 @@ import { useCmdK, useEscape } from '../components/useKeyboard';
 export default function Home() {
   const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [recentTrades, setRecentTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [showManualTrade, setShowManualTrade] = useState(false);
   const [pnlView, setPnlView] = useState<'ytd' | 'all'>('ytd');
@@ -54,6 +55,7 @@ export default function Home() {
     if (!user) return;
     fetchPortfolio();
     apiCall("/api/assets").then(async r => { if (r.ok) setAssets(await r.json()); }).catch(console.error);
+    apiCall("/api/trades?limit=5").then(async r => { if (r.ok) setRecentTrades(await r.json()); }).catch(console.error);
   }, [user]);
 
   const totalMarketValue = positions.reduce((acc, pos) => acc + pos.market_value, 0);
@@ -380,7 +382,7 @@ export default function Home() {
                     .map((pos) => {
                       const pctPortfolio = totalMarketValue > 0 ? (pos.market_value / totalMarketValue) * 100 : 0;
                       return (
-                        <tr key={pos.ticker} className="hover:bg-gray-700/30">
+                        <tr key={pos.ticker} onClick={() => window.location.href = `/portfolio?ticker=${pos.ticker}`} className="hover:bg-gray-700/30 cursor-pointer">
                           <td className="px-3 py-2.5 font-medium text-white">{pos.ticker}</td>
                           <td className="px-3 py-2.5 hidden sm:table-cell">
                             {pos.primary_theme && (
@@ -406,6 +408,30 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* Recent Trades */}
+        {recentTrades.length > 0 && (
+          <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-widest">Recent Trades</h3>
+              <a href="/portfolio?tab=trades" className="text-xs text-indigo-400 hover:text-indigo-300">View all &rarr;</a>
+            </div>
+            <div className="space-y-1.5">
+              {recentTrades.map((t, i) => (
+                <div key={i} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-3">
+                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${t.side === "Buy" ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}>
+                      {t.side}
+                    </span>
+                    <span className="text-white font-medium text-sm">{t.ticker}</span>
+                    <span className="text-gray-500 text-xs">{t.quantity} @ ${t.price.toFixed(2)}</span>
+                  </div>
+                  <span className="text-gray-500 text-xs">{new Date(t.date).toLocaleDateString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Daily Movers */}
         {assets.filter(a => a.daily_change_pct != null).length > 0 && (

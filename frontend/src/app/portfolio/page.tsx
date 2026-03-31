@@ -8,6 +8,7 @@ import { useToast } from "../../components/Toast";
 import { apiCall } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
 import { useEscape, useCmdK } from "../../components/useKeyboard";
+import { SkeletonTable } from "../../components/Skeleton";
 
 type TabType = "positions" | "trades" | "assets";
 
@@ -15,6 +16,7 @@ function PortfolioContent() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
+  const tickerParam = searchParams.get("ticker");
   const initialTab: TabType = tabParam === "trades" ? "trades" : tabParam === "assets" ? "assets" : "positions";
   const [tab, setTab] = useState<TabType>(initialTab);
 
@@ -55,16 +57,18 @@ function PortfolioContent() {
     setDetailTicker(ticker);
     setDetailLoading(true);
     setDetailTrades([]);
-    apiCall("/api/trades")
-      .then((r) => r.json())
-      .then((allTrades: Trade[]) => {
-        setDetailTrades(
-          allTrades.filter((t) => t.ticker === ticker).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        );
-      })
+    apiCall(`/api/trades?ticker=${ticker}&limit=0`)
+      .then(async (r) => { if (r.ok) setDetailTrades(await r.json()); })
       .catch(console.error)
       .finally(() => setDetailLoading(false));
   };
+
+  // Auto-open ticker detail if linked from dashboard
+  useEffect(() => {
+    if (tickerParam && user) {
+      openTickerDetail(tickerParam.toUpperCase());
+    }
+  }, [tickerParam, user]);
 
   useEscape(detailTicker ? () => setDetailTicker(null) : editingTrade ? () => setEditingTrade(null) : null);
 
@@ -200,9 +204,7 @@ function PortfolioContent() {
         {/* Positions Tab */}
         {tab === "positions" && (
           posLoading ? (
-            <div className="flex justify-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500" />
-            </div>
+            <SkeletonTable rows={8} cols={5} />
           ) : (
             <>
               {/* Top Gainers & Losers */}
@@ -291,9 +293,7 @@ function PortfolioContent() {
 
             {/* Trade Table */}
             {tradeLoading ? (
-              <div className="flex justify-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500" />
-              </div>
+              <SkeletonTable rows={10} cols={6} />
             ) : (
               <div className="overflow-x-auto rounded-xl border border-gray-700 bg-gray-800 shadow-xl">
                 <table className="min-w-full text-left text-sm whitespace-nowrap">
@@ -351,7 +351,7 @@ function PortfolioContent() {
         {/* Assets Tab */}
         {tab === "assets" && (
           assetLoading ? (
-            <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500" /></div>
+            <SkeletonTable rows={8} cols={5} />
           ) : (
             <>
               <div className="flex items-center gap-3 flex-wrap">
