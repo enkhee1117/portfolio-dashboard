@@ -423,6 +423,7 @@ export default function Home() {
               <a href="/portfolio?tab=trades" className="text-xs text-indigo-400 hover:text-indigo-300">View all &rarr;</a>
             )}
           </div>
+          {recentTrades.length > 0 && (
             <div className="space-y-1.5">
               {recentTrades.map((t, i) => (
                 <div key={i} className="flex items-center justify-between py-1">
