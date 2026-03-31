@@ -95,16 +95,24 @@ def fetch_and_store_ticker_prices(db, ticker: str, start: str = "2020-01-01"):
 
 
 def compute_rsi(closes: list[float], period: int = 14) -> float | None:
-    """Compute RSI from a list of closing prices (most recent last). Returns None if not enough data."""
+    """Compute RSI using Wilder's smoothing method (standard).
+    Uses the full price history for accurate smoothed averages, not just the last N prices."""
     if len(closes) < period + 1:
         return None
-    # Use last (period + 1) prices to get (period) changes
-    recent = closes[-(period + 1):]
-    changes = [recent[i + 1] - recent[i] for i in range(len(recent) - 1)]
-    gains = [c if c > 0 else 0 for c in changes]
-    losses = [-c if c < 0 else 0 for c in changes]
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
+
+    changes = [closes[i + 1] - closes[i] for i in range(len(closes) - 1)]
+    gains = [max(c, 0) for c in changes]
+    losses = [max(-c, 0) for c in changes]
+
+    # Seed with simple moving average of first `period` changes
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+
+    # Wilder's smoothing: avg = (prev_avg * (period-1) + current) / period
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+
     if avg_loss == 0:
         return 100.0
     rs = avg_gain / avg_loss
