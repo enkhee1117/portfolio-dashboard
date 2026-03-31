@@ -57,9 +57,16 @@ function PortfolioContent() {
     setDetailTicker(ticker);
     setDetailLoading(true);
     setDetailTrades([]);
-    apiCall(`/api/trades?ticker=${ticker}&limit=0`)
-      .then(async (r) => { if (r.ok) setDetailTrades(await r.json()); })
-      .catch(console.error)
+    apiCall(`/api/trades?ticker=${encodeURIComponent(ticker)}&limit=0`)
+      .then(async (r) => {
+        if (r.ok) {
+          const data = await r.json();
+          setDetailTrades(data);
+        } else {
+          console.error(`Failed to fetch trades for ${ticker}: ${r.status}`);
+        }
+      })
+      .catch((err) => console.error(`Error fetching trades for ${ticker}:`, err))
       .finally(() => setDetailLoading(false));
   };
 
@@ -220,7 +227,7 @@ function PortfolioContent() {
                         .map(pos => {
                           const pct = pos.average_price > 0 ? ((pos.current_price - pos.average_price) / pos.average_price) * 100 : 0;
                           return (
-                            <div key={pos.ticker} className="flex items-center justify-between py-0.5">
+                            <div key={pos.ticker} onClick={() => openTickerDetail(pos.ticker)} className="flex items-center justify-between py-0.5 cursor-pointer hover:bg-gray-700/30 rounded px-1 -mx-1">
                               <div className="flex items-center gap-2">
                                 <span className="text-white font-medium text-sm w-14">{pos.ticker}</span>
                                 <span className="text-xs text-gray-500">${pos.current_price.toFixed(2)}</span>
@@ -244,7 +251,7 @@ function PortfolioContent() {
                         .map(pos => {
                           const pct = pos.average_price > 0 ? ((pos.current_price - pos.average_price) / pos.average_price) * 100 : 0;
                           return (
-                            <div key={pos.ticker} className="flex items-center justify-between py-0.5">
+                            <div key={pos.ticker} onClick={() => openTickerDetail(pos.ticker)} className="flex items-center justify-between py-0.5 cursor-pointer hover:bg-gray-700/30 rounded px-1 -mx-1">
                               <div className="flex items-center gap-2">
                                 <span className="text-white font-medium text-sm w-14">{pos.ticker}</span>
                                 <span className="text-xs text-gray-500">${pos.current_price.toFixed(2)}</span>
