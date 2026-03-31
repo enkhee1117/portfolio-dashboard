@@ -164,7 +164,6 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
 
   return (
     <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-      <h3 className="text-lg font-semibold text-white mb-4">Add Manual Trade</h3>
 
       <form onSubmit={handleSubmit}>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

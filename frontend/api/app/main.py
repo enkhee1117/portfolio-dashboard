@@ -757,17 +757,18 @@ def _fetch_live_price(ticker: str) -> float:
 
 
 def _ensure_asset_price(db, ticker: str):
-    """Ensure shared asset_prices entry exists with a live price. Creates if missing."""
+    """Ensure shared asset_prices entry exists with a live price. Creates if missing.
+    Skips if doc already exists with a valid price (no yfinance call)."""
     shared_ref = db.collection('asset_prices').document(ticker)
-    if not shared_ref.get().exists:
+    doc = shared_ref.get()
+    if not doc.exists:
         price = _fetch_live_price(ticker)
         shared_ref.set({
             'ticker': ticker,
             'price': price,
             'last_updated': datetime.utcnow(),
         })
-    elif db.collection('asset_prices').document(ticker).get().to_dict().get('price', 0) == 0:
-        # Price is 0 — try to fetch a real one
+    elif doc.to_dict().get('price', 0) == 0:
         price = _fetch_live_price(ticker)
         if price > 0:
             shared_ref.update({'price': price, 'last_updated': datetime.utcnow()})
@@ -809,8 +810,8 @@ def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(g
     theme_ref = db.collection('users').document(user_id).collection('asset_themes').document(ticker_upper)
     if not theme_ref.get().exists:
         theme_ref.set({'ticker': ticker_upper, 'primary': '', 'secondary': ''})
-    # Ensure shared price entry exists with a live price
-    _ensure_asset_price(db, ticker_upper)
+        # Only fetch live price for brand new tickers — existing ones already have prices
+        _ensure_asset_price(db, ticker_upper)
 
     # Delta-update the cached snapshot for just this ticker (~5 reads vs ~2500 full recompute)
     if not calculator.apply_trade_delta(db, user_id, trade.ticker):
