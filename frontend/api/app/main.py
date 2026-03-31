@@ -341,7 +341,7 @@ def _run_price_refresh():
 
 def _intraday_price_refresh():
     """Lightweight refresh: only update prices for active portfolio tickers.
-    Runs every 15 min during market hours. Updates asset_prices + snapshot prices."""
+    Runs on-demand when portfolio is loaded and prices are >2 hours stale during market hours."""
     import yfinance as yf
     import pandas as pd
     import math
@@ -673,7 +673,7 @@ _refresh_in_progress: set[str] = set()
 def get_portfolio(db = Depends(get_db), user_id: str = Depends(get_current_user)):
     data = calculator.get_cached_portfolio(db, user_id=user_id)
 
-    # Stale-while-revalidate: if prices are >15 min old and market is open,
+    # Stale-while-revalidate: if prices are >2 hours old and market is open,
     # trigger a background refresh. Serve cached data immediately.
     if _is_market_open() and user_id not in _refresh_in_progress:
         try:
@@ -686,7 +686,7 @@ def get_portfolio(db = Depends(get_db), user_id: str = Depends(get_current_user)
                     if hasattr(computed_at, 'replace'):
                         computed_at = computed_at.replace(tzinfo=None)
                     age_minutes = (datetime.utcnow() - computed_at).total_seconds() / 60
-                    if age_minutes > 15:
+                    if age_minutes > 120:
                         import threading
                         _refresh_in_progress.add(user_id)
                         def _bg_refresh():
@@ -1315,7 +1315,7 @@ def refresh_status(db=Depends(get_db)):
     return {
         "last_refresh": (latest.isoformat() + "Z") if latest else None,
         "next_scheduled": next_run,
-        "schedule": "Intraday: on-demand when you load the portfolio (if >15 min stale during market hours). Full refresh: 5:30 PM ET.",
+        "schedule": "Intraday: on-demand when you load the portfolio (if >2 hours stale during market hours). Full refresh: 5:30 PM ET.",
     }
 
 
