@@ -26,6 +26,9 @@ function PortfolioContent() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [tradeLoading, setTradeLoading] = useState(true);
 
+  // Delete confirmation (inline, no alert)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
   // Assets
   const [assets, setAssets] = useState<Asset[]>([]);
   const [themes, setThemes] = useState<ThemeLists>({ primary: [], secondary: [] });
@@ -138,7 +141,15 @@ function PortfolioContent() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this trade?")) return;
+    if (confirmDeleteId !== id) {
+      // First click — show confirmation state
+      setConfirmDeleteId(id);
+      // Auto-reset after 3 seconds if user doesn't confirm
+      setTimeout(() => setConfirmDeleteId((prev) => prev === id ? null : prev), 3000);
+      return;
+    }
+    // Second click — actually delete
+    setConfirmDeleteId(null);
     try {
       const res = await apiCall(`/api/trades/${id}`, { method: "DELETE" });
       if (res.ok) {
@@ -330,7 +341,10 @@ function PortfolioContent() {
                         </td>
                         <td className="px-6 py-4 text-right space-x-2">
                           <button onClick={() => setEditingTrade(trade)} className="text-blue-400 hover:text-blue-300 text-xs">Edit</button>
-                          <button onClick={() => handleDelete(trade.id)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
+                          <button
+                            onClick={() => handleDelete(trade.id)}
+                            className={`text-xs font-medium transition-all ${confirmDeleteId === trade.id ? "bg-red-600 text-white px-2 py-0.5 rounded" : "text-red-400 hover:text-red-300"}`}
+                          >{confirmDeleteId === trade.id ? "Confirm?" : "Delete"}</button>
                         </td>
                       </tr>
                     ))}
