@@ -188,6 +188,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
               <TH colKey="current_price" label="Current" right hideOnMobile />
               <TH colKey="market_value" label="Mkt Value" right />
               <TH colKey="unrealized_pnl" label="Unreal. P&L" right />
+              <th className="px-3 py-3 font-semibold text-xs text-right hidden lg:table-cell">Return %</th>
               <TH colKey="realized_pnl" label="Real. P&L" right hideOnMobile />
             </tr>
           </thead>
@@ -255,6 +256,11 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
                   >
                     ${pos.unrealized_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
+                  <td className={`hidden lg:table-cell px-3 py-2.5 text-right font-medium ${pos.unrealized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+                    {pos.average_price > 0 && pos.quantity > 0
+                      ? `${((pos.current_price - pos.average_price) / pos.average_price * 100).toFixed(1)}%`
+                      : "--"}
+                  </td>
                   <td
                     className={`hidden md:table-cell px-3 py-2.5 text-right font-medium ${pos.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}
                   >
@@ -266,7 +272,7 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
             {sortedAndFilteredPositions.length === 0 && (
               <tr>
                 <td
-                  colSpan={9}
+                  colSpan={10}
                   className="px-6 py-8 text-center text-gray-500 italic"
                 >
                   No positions yet. Import trades from <a href="/settings" className="text-indigo-400 hover:underline">Settings</a> or add one from the Dashboard.
@@ -274,6 +280,42 @@ const PositionTable: React.FC<PositionTableProps> = ({ positions }) => {
               </tr>
             )}
           </tbody>
+          {sortedAndFilteredPositions.length > 0 && (
+            <tfoot className="border-t-2 border-gray-600 bg-gray-900/50">
+              <tr className="font-semibold text-sm">
+                <td className="px-3 py-3 text-white">Total ({sortedAndFilteredPositions.filter(p => p.quantity > 0).length} active)</td>
+                <td className="hidden md:table-cell" />
+                <td className="hidden md:table-cell" />
+                <td className="px-3 py-3 text-right text-gray-300">
+                  {sortedAndFilteredPositions.reduce((s, p) => s + p.quantity, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </td>
+                <td className="hidden md:table-cell" />
+                <td className="hidden md:table-cell" />
+                <td className="px-3 py-3 text-right text-white">
+                  ${sortedAndFilteredPositions.reduce((s, p) => s + p.market_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+                {(() => {
+                  const totalUnrealized = sortedAndFilteredPositions.reduce((s, p) => s + p.unrealized_pnl, 0);
+                  const totalCostBasis = sortedAndFilteredPositions.reduce((s, p) => s + (p.quantity > 0 ? p.average_price * p.quantity : 0), 0);
+                  const totalReturnPct = totalCostBasis > 0 ? (totalUnrealized / totalCostBasis * 100) : 0;
+                  const totalRealized = sortedAndFilteredPositions.reduce((s, p) => s + p.realized_pnl, 0);
+                  return (
+                    <>
+                      <td className={`px-3 py-3 text-right font-semibold ${totalUnrealized >= 0 ? "text-green-400" : "text-red-400"}`}>
+                        ${totalUnrealized.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className={`hidden lg:table-cell px-3 py-3 text-right font-semibold ${totalReturnPct >= 0 ? "text-green-400" : "text-red-400"}`}>
+                        {totalReturnPct.toFixed(1)}%
+                      </td>
+                      <td className={`hidden md:table-cell px-3 py-3 text-right font-semibold ${totalRealized >= 0 ? "text-green-400" : "text-red-400"}`}>
+                        ${totalRealized.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </>
+                  );
+                })()}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 

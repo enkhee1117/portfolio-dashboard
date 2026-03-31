@@ -339,7 +339,13 @@ export default function Home() {
                 <h2 className="text-lg font-bold text-white">Add Trade</h2>
                 <button onClick={() => setShowManualTrade(false)} className="text-gray-400 hover:text-white text-xl px-2 hover:bg-gray-700 rounded">&times;</button>
               </div>
-              <ManualTradeForm onTradeAdded={() => { fetchPortfolio(); setShowManualTrade(false); }} />
+              <ManualTradeForm onTradeAdded={() => {
+                fetchPortfolio();
+                setShowManualTrade(false);
+                toast.success("Trade added successfully");
+                // Refresh recent trades
+                apiCall("/api/trades?limit=5").then(async r => { if (r.ok) setRecentTrades(await r.json()); }).catch(console.error);
+              }} />
             </div>
           </div>
         )}
@@ -410,12 +416,13 @@ export default function Home() {
         </div>
 
         {/* Recent Trades */}
-        {recentTrades.length > 0 && (
-          <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-widest">Recent Trades</h3>
+        <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-widest">Recent Trades</h3>
+            {recentTrades.length > 0 && (
               <a href="/portfolio?tab=trades" className="text-xs text-indigo-400 hover:text-indigo-300">View all &rarr;</a>
-            </div>
+            )}
+          </div>
             <div className="space-y-1.5">
               {recentTrades.map((t, i) => (
                 <div key={i} className="flex items-center justify-between py-1">
@@ -430,8 +437,11 @@ export default function Home() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+          {recentTrades.length === 0 && !loading && (
+            <p className="text-gray-500 text-sm">No trades yet. <button onClick={() => setShowManualTrade(true)} className="text-indigo-400 hover:text-indigo-300">Add your first trade</button> or <a href="/settings" className="text-indigo-400 hover:text-indigo-300">import from Settings</a>.</p>
+          )}
+        </div>
 
         {/* Daily Movers */}
         {assets.filter(a => a.daily_change_pct != null).length > 0 && (
