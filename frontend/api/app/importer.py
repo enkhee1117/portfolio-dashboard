@@ -1,12 +1,8 @@
 import pandas as pd
 from . import schemas
+from .auth import normalize_theme
 from datetime import datetime
 from google.cloud import firestore
-
-
-def normalize_theme(name: str) -> str:
-    """Normalize theme names to Title Case for consistent grouping."""
-    return name.strip().title() if name else ""
 
 def import_data(db: firestore.Client, file_path: str, skip_dedup: bool = False, user_id: str = "anonymous"):
     def clean_currency(val):

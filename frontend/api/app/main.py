@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Header
 from fastapi.responses import JSONResponse
 from . import schemas, database, importer, calculator
+from .auth import get_current_user, get_optional_user, get_user_tickers, normalize_theme
+from .services.monitoring import log_error
 from google.cloud.firestore_v1.base_query import FieldFilter
 import os
 import shutil
@@ -11,50 +13,6 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 logger = logging.getLogger("portfolio")
-
-
-# ── Authentication ────────────────────────────────────────────────────
-
-def get_current_user(authorization: Optional[str] = Header(None)) -> str:
-    """Extract user_id from Firebase ID token. Raises 401 if not authenticated."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    try:
-        from firebase_admin import auth
-        token = authorization.replace("Bearer ", "")
-        decoded = auth.verify_id_token(token)
-        return decoded['uid']
-    except Exception as e:
-        logger.warning(f"Auth token verification failed: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-
-def get_optional_user(authorization: Optional[str] = Header(None)) -> str:
-    """Extract user_id if token present, otherwise return 'anonymous'. For shared endpoints."""
-    if not authorization or not authorization.startswith("Bearer "):
-        return "anonymous"
-    try:
-        from firebase_admin import auth
-        token = authorization.replace("Bearer ", "")
-        decoded = auth.verify_id_token(token)
-        return decoded['uid']
-    except Exception:
-        return "anonymous"
-
-
-def get_user_tickers(db, user_id: str) -> set[str]:
-    """Return the set of tickers a user owns from their asset_themes subcollection.
-    This is the fast path — asset_themes is the user's asset registry,
-    populated by migration, import, and manual registration."""
-    tickers: set[str] = set()
-    for doc in db.collection('users').document(user_id).collection('asset_themes').stream():
-        tickers.add(doc.id)
-    return tickers
-
-
-def normalize_theme(name: str) -> str:
-    """Normalize theme names to Title Case for consistent grouping."""
-    return name.strip().title() if name else ""
 
 
 # ── Shared Price Fetching Utilities ───────────────────────────────────
@@ -637,28 +595,7 @@ def get_db():
     from firebase_admin import firestore
     return firestore.client()
 
-# ── Error Logging & Health Check ──────────────────────────────────────
-
-def log_error(db, source: str, message: str, details: str = ""):
-    """Log an error to Firestore for monitoring. Keeps last 100 entries."""
-    try:
-        db.collection('error_log').add({
-            "source": source,
-            "message": message,
-            "details": details[:500],  # Truncate to avoid large docs
-            "timestamp": datetime.utcnow(),
-        })
-        # Cleanup: delete entries older than 7 days (best-effort)
-        from datetime import timedelta
-        cutoff = datetime.utcnow() - timedelta(days=7)
-        old_docs = db.collection('error_log').where(
-            'timestamp', '<', cutoff
-        ).limit(50).stream()
-        for doc in old_docs:
-            doc.reference.delete()
-    except Exception:
-        pass  # Don't let error logging cause errors
-
+# log_error imported from services.monitoring at top of file
 
 @app.get("/")
 def read_root():
