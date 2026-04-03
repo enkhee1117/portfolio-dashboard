@@ -641,6 +641,13 @@ def health_check(db=Depends(get_db)):
         "errors": errors,
     }
 
+@app.get("/config")
+def get_config():
+    """Return feature flags and app configuration."""
+    from .feature_flags import get_all_flags
+    return {"features": get_all_flags()}
+
+
 @app.post("/import")
 @limiter.limit("5/minute")
 async def import_excel(request: Request, file: UploadFile = File(...), skip_dedup: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):

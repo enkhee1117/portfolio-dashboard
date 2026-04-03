@@ -1,0 +1,8 @@
+{
+  "wash_sales": true,
+  "rsi_screener": true,
+  "theme_baskets": true,
+  "intraday_refresh": true,
+  "recent_trades": true,
+  "daily_movers": true
+}

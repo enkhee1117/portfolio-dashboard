@@ -9,9 +9,11 @@ import { useToast } from '../components/Toast';
 import { apiCall } from "../lib/api";
 import { usePortfolio } from "../lib/PortfolioContext";
 import { useCmdK, useEscape } from '../components/useKeyboard';
+import { useFeatureFlags } from '../lib/useFeatureFlags';
 
 export default function Home() {
   const { positions, assets, recentTrades, loading, refresh, activePositions, themes: derivedThemes } = usePortfolio();
+  const flags = useFeatureFlags();
   const [showManualTrade, setShowManualTrade] = useState(false);
   const [pnlView, setPnlView] = useState<'ytd' | 'all'>('ytd');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
@@ -380,7 +382,7 @@ export default function Home() {
         </div>
 
         {/* Recent Trades */}
-        <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+        {flags.recent_trades && <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
           <div className="flex justify-between items-center mb-3">
             <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-widest">Recent Trades</h3>
             {recentTrades.length > 0 && (
@@ -406,10 +408,10 @@ export default function Home() {
           {recentTrades.length === 0 && !loading && (
             <p className="text-gray-500 text-sm">No trades yet. <button onClick={() => setShowManualTrade(true)} className="text-indigo-400 hover:text-indigo-300">Add your first trade</button> or <a href="/settings" className="text-indigo-400 hover:text-indigo-300">import from Settings</a>.</p>
           )}
-        </div>
+        </div>}
 
         {/* Daily Movers */}
-        {assets.filter(a => a.daily_change_pct != null).length > 0 && (
+        {flags.daily_movers && assets.filter(a => a.daily_change_pct != null).length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Biggest Daily Gainers */}
             {(() => {
@@ -474,7 +476,7 @@ export default function Home() {
         )}
 
         {/* RSI Signals */}
-        {assets.filter(a => a.rsi != null).length > 0 && (() => {
+        {flags.rsi_screener && assets.filter(a => a.rsi != null).length > 0 && (() => {
           // Exclude cash/treasury from RSI signals — RSI is meaningless for these
           const RSI_EXCLUDE_THEMES = ["cash", "treasury"];
           const rsiAssets = assets.filter(a => {
