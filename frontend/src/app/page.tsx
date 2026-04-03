@@ -17,6 +17,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [showManualTrade, setShowManualTrade] = useState(false);
   const [pnlView, setPnlView] = useState<'ytd' | 'all'>('ytd');
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
 
   const { user } = useAuth();
   const toast = useToast();
@@ -448,50 +449,64 @@ export default function Home() {
         {assets.filter(a => a.daily_change_pct != null).length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Biggest Daily Gainers */}
-            <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-              <h3 className="text-sm font-semibold text-green-400 uppercase tracking-widest mb-3">Daily Gainers</h3>
-              <div className="space-y-2">
-                {assets
-                  .filter(a => a.daily_change_pct != null && a.daily_change_pct! > 0)
-                  .sort((a, b) => (b.daily_change_pct || 0) - (a.daily_change_pct || 0))
-                  .slice(0, 5)
-                  .map(a => (
-                    <div key={a.ticker} className="flex items-center justify-between py-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-medium text-sm">{a.ticker}</span>
-                        <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
+            {(() => {
+              const gainers = assets.filter(a => a.daily_change_pct != null && a.daily_change_pct! > 0).sort((a, b) => (b.daily_change_pct || 0) - (a.daily_change_pct || 0));
+              const showAll = expandedSections["gainers"];
+              const visible = showAll ? gainers : gainers.slice(0, 5);
+              return (
+                <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+                  <h3 className="text-sm font-semibold text-green-400 uppercase tracking-widest mb-3">Daily Gainers ({gainers.length})</h3>
+                  <div className="space-y-2">
+                    {visible.map(a => (
+                      <div key={a.ticker} className="flex items-center justify-between py-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-medium text-sm w-12">{a.ticker}</span>
+                          {a.primary_theme && <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">{a.primary_theme}</span>}
+                          <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
+                        </div>
+                        <span className="text-green-400 text-sm font-medium">+{a.daily_change_pct!.toFixed(2)}%</span>
                       </div>
-                      <span className="text-green-400 text-sm font-medium">+{a.daily_change_pct!.toFixed(2)}%</span>
-                    </div>
-                  ))}
-                {assets.filter(a => a.daily_change_pct != null && a.daily_change_pct! > 0).length === 0 && (
-                  <p className="text-gray-500 text-xs italic">No gainers today</p>
-                )}
-              </div>
-            </div>
+                    ))}
+                    {gainers.length === 0 && <p className="text-gray-500 text-xs italic">No gainers today</p>}
+                    {gainers.length > 5 && (
+                      <button onClick={() => setExpandedSections(s => ({ ...s, gainers: !s.gainers }))} className="text-xs text-indigo-400 hover:text-indigo-300 mt-1">
+                        {showAll ? "Show less" : `Show all ${gainers.length}`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Biggest Daily Losers */}
-            <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-              <h3 className="text-sm font-semibold text-red-400 uppercase tracking-widest mb-3">Daily Losers</h3>
-              <div className="space-y-2">
-                {assets
-                  .filter(a => a.daily_change_pct != null && a.daily_change_pct! < 0)
-                  .sort((a, b) => (a.daily_change_pct || 0) - (b.daily_change_pct || 0))
-                  .slice(0, 5)
-                  .map(a => (
-                    <div key={a.ticker} className="flex items-center justify-between py-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-medium text-sm">{a.ticker}</span>
-                        <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
+            {(() => {
+              const losers = assets.filter(a => a.daily_change_pct != null && a.daily_change_pct! < 0).sort((a, b) => (a.daily_change_pct || 0) - (b.daily_change_pct || 0));
+              const showAll = expandedSections["losers"];
+              const visible = showAll ? losers : losers.slice(0, 5);
+              return (
+                <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+                  <h3 className="text-sm font-semibold text-red-400 uppercase tracking-widest mb-3">Daily Losers ({losers.length})</h3>
+                  <div className="space-y-2">
+                    {visible.map(a => (
+                      <div key={a.ticker} className="flex items-center justify-between py-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-medium text-sm w-12">{a.ticker}</span>
+                          {a.primary_theme && <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">{a.primary_theme}</span>}
+                          <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
+                        </div>
+                        <span className="text-red-400 text-sm font-medium">{a.daily_change_pct!.toFixed(2)}%</span>
                       </div>
-                      <span className="text-red-400 text-sm font-medium">{a.daily_change_pct!.toFixed(2)}%</span>
-                    </div>
-                  ))}
-                {assets.filter(a => a.daily_change_pct != null && a.daily_change_pct! < 0).length === 0 && (
-                  <p className="text-gray-500 text-xs italic">No losers today</p>
-                )}
-              </div>
-            </div>
+                    ))}
+                    {losers.length === 0 && <p className="text-gray-500 text-xs italic">No losers today</p>}
+                    {losers.length > 5 && (
+                      <button onClick={() => setExpandedSections(s => ({ ...s, losers: !s.losers }))} className="text-xs text-indigo-400 hover:text-indigo-300 mt-1">
+                        {showAll ? "Show less" : `Show all ${losers.length}`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -508,62 +523,76 @@ export default function Home() {
           return (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Overbought */}
-            <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-              <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-widest mb-1">Overbought (RSI &gt; 70)</h3>
-              <p className="text-xs text-gray-500 mb-3">May be due for a pullback</p>
-              <div className="space-y-1.5">
-                {rsiAssets
-                  .filter(a => a.rsi! > 70)
-                  .sort((a, b) => (b.rsi || 0) - (a.rsi || 0))
-                  .slice(0, 10)
-                  .map(a => (
-                    <div key={a.ticker} className="flex items-center justify-between py-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-medium text-sm">{a.ticker}</span>
-                        <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                          <div className="h-full bg-amber-500 rounded-full" style={{ width: `${a.rsi}%` }} />
+            {(() => {
+              const overbought = rsiAssets.filter(a => a.rsi! > 70).sort((a, b) => (b.rsi || 0) - (a.rsi || 0));
+              const showAll = expandedSections["overbought"];
+              const visible = showAll ? overbought : overbought.slice(0, 10);
+              return (
+                <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+                  <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-widest mb-1">Overbought RSI &gt; 70 ({overbought.length})</h3>
+                  <p className="text-xs text-gray-500 mb-3">May be due for a pullback</p>
+                  <div className="space-y-1.5">
+                    {visible.map(a => (
+                      <div key={a.ticker} className="flex items-center justify-between py-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-medium text-sm w-12">{a.ticker}</span>
+                          {a.primary_theme && <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">{a.primary_theme}</span>}
+                          <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
                         </div>
-                        <span className="text-amber-400 text-sm font-medium w-10 text-right">{a.rsi}</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                            <div className="h-full bg-amber-500 rounded-full" style={{ width: `${a.rsi}%` }} />
+                          </div>
+                          <span className="text-amber-400 text-sm font-medium w-10 text-right">{a.rsi}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                {rsiAssets.filter(a => a.rsi! > 70).length === 0 && (
-                  <p className="text-gray-500 text-xs italic">No overbought assets</p>
-                )}
-              </div>
-            </div>
+                    ))}
+                    {overbought.length === 0 && <p className="text-gray-500 text-xs italic">No overbought assets</p>}
+                    {overbought.length > 10 && (
+                      <button onClick={() => setExpandedSections(s => ({ ...s, overbought: !s.overbought }))} className="text-xs text-indigo-400 hover:text-indigo-300 mt-1">
+                        {showAll ? "Show less" : `Show all ${overbought.length}`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Oversold */}
-            <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-              <h3 className="text-sm font-semibold text-cyan-400 uppercase tracking-widest mb-1">Oversold (RSI &lt; 30)</h3>
-              <p className="text-xs text-gray-500 mb-3">May be a buying opportunity</p>
-              <div className="space-y-1.5">
-                {rsiAssets
-                  .filter(a => a.rsi! < 30)
-                  .sort((a, b) => (a.rsi || 0) - (b.rsi || 0))
-                  .slice(0, 10)
-                  .map(a => (
-                    <div key={a.ticker} className="flex items-center justify-between py-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-medium text-sm">{a.ticker}</span>
-                        <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                          <div className="h-full bg-cyan-500 rounded-full" style={{ width: `${a.rsi}%` }} />
+            {(() => {
+              const oversold = rsiAssets.filter(a => a.rsi! < 30).sort((a, b) => (a.rsi || 0) - (b.rsi || 0));
+              const showAll = expandedSections["oversold"];
+              const visible = showAll ? oversold : oversold.slice(0, 10);
+              return (
+                <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
+                  <h3 className="text-sm font-semibold text-cyan-400 uppercase tracking-widest mb-1">Oversold RSI &lt; 30 ({oversold.length})</h3>
+                  <p className="text-xs text-gray-500 mb-3">May be a buying opportunity</p>
+                  <div className="space-y-1.5">
+                    {visible.map(a => (
+                      <div key={a.ticker} className="flex items-center justify-between py-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-medium text-sm w-12">{a.ticker}</span>
+                          {a.primary_theme && <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-900/40 text-indigo-300 border border-indigo-700/50">{a.primary_theme}</span>}
+                          <span className="text-xs text-gray-500">${a.price.toFixed(2)}</span>
                         </div>
-                        <span className="text-cyan-400 text-sm font-medium w-10 text-right">{a.rsi}</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                            <div className="h-full bg-cyan-500 rounded-full" style={{ width: `${a.rsi}%` }} />
+                          </div>
+                          <span className="text-cyan-400 text-sm font-medium w-10 text-right">{a.rsi}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                {rsiAssets.filter(a => a.rsi! < 30).length === 0 && (
-                  <p className="text-gray-500 text-xs italic">No oversold assets</p>
-                )}
-              </div>
-            </div>
+                    ))}
+                    {oversold.length === 0 && <p className="text-gray-500 text-xs italic">No oversold assets</p>}
+                    {oversold.length > 10 && (
+                      <button onClick={() => setExpandedSections(s => ({ ...s, oversold: !s.oversold }))} className="text-xs text-indigo-400 hover:text-indigo-300 mt-1">
+                        {showAll ? "Show less" : `Show all ${oversold.length}`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           );
         })()}
