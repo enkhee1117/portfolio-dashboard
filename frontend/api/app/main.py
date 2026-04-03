@@ -637,9 +637,82 @@ def get_db():
     from firebase_admin import firestore
     return firestore.client()
 
+# ── Error Logging & Health Check ──────────────────────────────────────
+
+def log_error(db, source: str, message: str, details: str = ""):
+    """Log an error to Firestore for monitoring. Keeps last 100 entries."""
+    try:
+        db.collection('error_log').add({
+            "source": source,
+            "message": message,
+            "details": details[:500],  # Truncate to avoid large docs
+            "timestamp": datetime.utcnow(),
+        })
+        # Cleanup: delete entries older than 7 days (best-effort)
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(days=7)
+        old_docs = db.collection('error_log').where(
+            'timestamp', '<', cutoff
+        ).limit(50).stream()
+        for doc in old_docs:
+            doc.reference.delete()
+    except Exception:
+        pass  # Don't let error logging cause errors
+
+
 @app.get("/")
 def read_root():
     return {"message": "Portfolio Tracker API (Firebase Edition)"}
+
+
+@app.get("/health")
+def health_check(db=Depends(get_db)):
+    """Health check endpoint — returns app status and recent errors."""
+    errors = []
+    try:
+        docs = db.collection('error_log').order_by(
+            'timestamp', direction='DESCENDING'
+        ).limit(10).stream()
+        for doc in docs:
+            d = doc.to_dict()
+            ts = d.get('timestamp')
+            if ts and hasattr(ts, 'isoformat'):
+                ts = ts.replace(tzinfo=None).isoformat() + "Z"
+            errors.append({
+                "source": d.get("source"),
+                "message": d.get("message"),
+                "timestamp": ts,
+            })
+    except Exception:
+        pass
+
+    # Check last price refresh
+    last_refresh = None
+    try:
+        docs = db.collection('asset_prices').order_by(
+            'last_updated', direction='DESCENDING'
+        ).limit(1).stream()
+        for doc in docs:
+            lu = doc.to_dict().get('last_updated')
+            if lu and hasattr(lu, 'replace'):
+                last_refresh = lu.replace(tzinfo=None).isoformat() + "Z"
+    except Exception:
+        pass
+
+    # Stale check: warn if prices are >26 hours old (missed daily refresh)
+    price_stale = False
+    if last_refresh:
+        from datetime import timedelta
+        last_dt = datetime.fromisoformat(last_refresh.rstrip("Z"))
+        price_stale = (datetime.utcnow() - last_dt) > timedelta(hours=26)
+
+    return {
+        "status": "degraded" if price_stale or len(errors) > 5 else "healthy",
+        "price_stale": price_stale,
+        "last_price_refresh": last_refresh,
+        "recent_errors": len(errors),
+        "errors": errors,
+    }
 
 @app.post("/import")
 @limiter.limit("5/minute")
@@ -1345,23 +1418,54 @@ def cron_refresh_prices(authorization: Optional[str] = Header(None)):
         raise HTTPException(status_code=403, detail="CRON_SECRET not configured")
     # Local dev without CRON_SECRET is allowed (for manual testing)
 
-    result = _run_price_refresh()
+    db = get_db()
+    result = {"updated": 0, "failed": []}
+    errors = []
+
     try:
-        db = get_db()
-        compute_and_store_rsi(db)
-        # Full recompute for all users
-        for user_doc in db.collection('users').stream():
-            try:
-                calculator.compute_and_store_snapshot(db, user_id=user_doc.id)
-            except Exception:
-                pass
+        result = _run_price_refresh()
     except Exception as e:
-        logger.error(f"Cron refresh error: {e}")
+        errors.append(f"Price refresh failed: {e}")
+        logger.error(f"Cron price refresh error: {e}")
+
+    try:
+        compute_and_store_rsi(db)
+    except Exception as e:
+        errors.append(f"RSI compute failed: {e}")
+        logger.error(f"Cron RSI error: {e}")
+
+    # Full recompute for all users
+    for user_doc in db.collection('users').stream():
+        try:
+            calculator.compute_and_store_snapshot(db, user_id=user_doc.id)
+        except Exception as e:
+            errors.append(f"Snapshot failed for {user_doc.id[:8]}: {e}")
+
+    # Log errors to Firestore for health check visibility
+    if errors:
+        log_error(db, "cron/refresh-prices", f"{len(errors)} errors during daily refresh", "; ".join(errors))
+
+    # Send notification webhook if configured (e.g., ntfy.sh, Slack, etc.)
+    notify_url = os.environ.get("NOTIFY_WEBHOOK_URL")
+    if notify_url:
+        import urllib.request
+        try:
+            status = "with errors" if errors else "successfully"
+            msg = f"Daily refresh completed {status}. {result['updated']} prices updated, {len(result['failed'])} failed."
+            if errors:
+                msg += f"\nErrors: {'; '.join(errors[:3])}"
+            urllib.request.urlopen(urllib.request.Request(
+                notify_url, data=msg.encode(), method="POST",
+                headers={"Title": "Portfolio Tracker Daily Refresh", "Priority": "high" if errors else "default"},
+            ))
+        except Exception:
+            pass
 
     return {
-        "message": f"Cron refresh complete. Updated {result['updated']} prices, {len(result['failed'])} failed.",
+        "message": f"Cron refresh complete. Updated {result['updated']} prices, {len(result['failed'])} failed. {len(errors)} errors.",
         "updated": result["updated"],
         "failed_count": len(result["failed"]),
+        "errors": errors,
     }
 
 

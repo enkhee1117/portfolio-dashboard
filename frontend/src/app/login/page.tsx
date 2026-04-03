@@ -168,6 +168,12 @@ export default function LoginPage() {
             </button>
           </p>
         </div>
+        <p className="text-center text-xs text-gray-600 mt-4">
+          By signing in, you agree to our{" "}
+          <a href="/terms" className="text-gray-500 hover:text-gray-400 underline">Terms of Service</a>
+          {" "}and{" "}
+          <a href="/privacy" className="text-gray-500 hover:text-gray-400 underline">Privacy Policy</a>.
+        </p>
       </div>
     </div>
   );
