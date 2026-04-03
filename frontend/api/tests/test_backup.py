@@ -89,6 +89,7 @@ def make_mock_db(trade_docs=None, asset_theme_docs=None):
 @pytest.fixture(autouse=True)
 def mock_firebase(monkeypatch):
     monkeypatch.setattr("firebase_admin._apps", {"default": True})
+    monkeypatch.setenv("TESTING", "1")  # Disable rate limiting in tests
 
 @pytest.fixture(autouse=True)
 def override_auth():

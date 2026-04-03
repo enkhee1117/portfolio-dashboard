@@ -121,6 +121,7 @@ def make_mock_db(trades=None, asset_prices=None):
 def mock_firebase(monkeypatch):
     """Patch firebase_admin so no real credentials are needed."""
     monkeypatch.setattr("firebase_admin._apps", {"default": True})
+    monkeypatch.setenv("TESTING", "1")  # Disable rate limiting
     # Override auth to return a test user for all protected endpoints
     app.dependency_overrides[get_current_user] = lambda: "test-user-123"
     yield

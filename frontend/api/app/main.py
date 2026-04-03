@@ -546,14 +546,34 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 
+# ── Rate Limiting ─────────────────────────────────────────────────────
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+_rate_limit_enabled = os.environ.get("TESTING", "") != "1"
+limiter = Limiter(key_func=get_remote_address, enabled=_rate_limit_enabled)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 from fastapi.middleware.cors import CORSMiddleware
-origins = ["http://localhost:3000", "*"]
+
+# Production CORS — only allow known origins
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "https://portfolio-dashboard-seven-lemon.vercel.app",
+]
+# Allow custom domain via env var (e.g., https://app.moljuurtei.com)
+_custom_origin = os.environ.get("CORS_ORIGIN")
+if _custom_origin:
+    ALLOWED_ORIGINS.append(_custom_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -622,7 +642,8 @@ def read_root():
     return {"message": "Portfolio Tracker API (Firebase Edition)"}
 
 @app.post("/import")
-async def import_excel(file: UploadFile = File(...), skip_dedup: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
+@limiter.limit("5/minute")
+async def import_excel(request: Request, file: UploadFile = File(...), skip_dedup: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
     file_location = f"temp_{file.filename}"
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(file.file, file_object)
@@ -796,7 +817,8 @@ def _invalidate_snapshot_cache(db, user_id: str):
 
 
 @app.post("/trades/manual", response_model=schemas.Trade)
-def create_trade(trade: schemas.TradeCreate, force: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
+@limiter.limit("30/minute")
+def create_trade(request: Request, trade: schemas.TradeCreate, force: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
     # Normalize ticker to uppercase
     trade.ticker = trade.ticker.upper()
     if not force:
@@ -1285,7 +1307,8 @@ def recheck_wash_sales(db=Depends(get_db), user_id: str = Depends(get_current_us
 # ── Price Refresh (Yahoo Finance) ─────────────────────────────────────
 
 @app.post("/assets/refresh-prices")
-def refresh_prices():
+@limiter.limit("2/hour")
+def refresh_prices(request: Request):
     """Manual trigger for price refresh (uses shared _run_price_refresh)."""
     result = _run_price_refresh()
     # Compute RSI from price_series after refresh
@@ -1302,13 +1325,19 @@ def refresh_prices():
 
 
 @app.get("/cron/refresh-prices")
-def cron_refresh_prices():
+def cron_refresh_prices(authorization: Optional[str] = Header(None)):
     """Cron-triggered price refresh. Secured by CRON_SECRET env var.
     Called by Vercel Cron Jobs daily after market close."""
-    from fastapi import Request
-    # Vercel Cron sends Authorization: Bearer <CRON_SECRET>
-    # For simplicity, also allow if no secret is configured (local dev)
     cron_secret = os.environ.get("CRON_SECRET", "")
+    if cron_secret:
+        # Vercel sends Authorization: Bearer <CRON_SECRET>
+        token = (authorization or "").replace("Bearer ", "")
+        if token != cron_secret:
+            raise HTTPException(status_code=401, detail="Invalid cron secret")
+    elif IS_SERVERLESS:
+        # In production without CRON_SECRET = block
+        raise HTTPException(status_code=403, detail="CRON_SECRET not configured")
+    # Local dev without CRON_SECRET is allowed (for manual testing)
 
     result = _run_price_refresh()
     try:
@@ -1961,7 +1990,8 @@ def export_backup(db=Depends(get_db), user_id: str = Depends(get_current_user)):
 
 
 @app.post("/backup/restore")
-async def restore_backup(file: UploadFile = File(...), db=Depends(get_db), user_id: str = Depends(get_current_user)):
+@limiter.limit("3/hour")
+async def restore_backup(request: Request, file: UploadFile = File(...), db=Depends(get_db), user_id: str = Depends(get_current_user)):
     """Restore user's trades and asset themes from a JSON backup file."""
     try:
         content = await file.read()
@@ -1975,6 +2005,18 @@ async def restore_backup(file: UploadFile = File(...), db=Depends(get_db), user_
 
     trades_data = backup.get("trades", [])
     assets_data = backup.get("assets", [])
+
+    # --- Validate backup before deleting anything ---
+    if not isinstance(trades_data, list) or not isinstance(assets_data, list):
+        raise HTTPException(status_code=400, detail="Invalid backup format: trades and assets must be arrays.")
+    for i, t in enumerate(trades_data):
+        if not isinstance(t, dict) or "ticker" not in t or "side" not in t:
+            raise HTTPException(status_code=400, detail=f"Invalid trade at index {i}: missing required fields.")
+        if "date" not in t:
+            raise HTTPException(status_code=400, detail=f"Invalid trade at index {i}: missing date.")
+    for i, a in enumerate(assets_data):
+        if not isinstance(a, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid asset at index {i}: not an object.")
 
     # --- Delete user's existing data only ---
     # Delete user's trades
