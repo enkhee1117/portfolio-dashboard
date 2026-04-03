@@ -452,7 +452,7 @@ export default function Home() {
             {(() => {
               const gainers = assets.filter(a => a.daily_change_pct != null && a.daily_change_pct! > 0).sort((a, b) => (b.daily_change_pct || 0) - (a.daily_change_pct || 0));
               const showAll = expandedSections["gainers"];
-              const visible = showAll ? gainers : gainers.slice(0, 5);
+              const visible = showAll ? gainers.slice(0, 15) : gainers.slice(0, 5);
               return (
                 <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
                   <h3 className="text-sm font-semibold text-green-400 uppercase tracking-widest mb-3">Daily Gainers ({gainers.length})</h3>
@@ -470,7 +470,7 @@ export default function Home() {
                     {gainers.length === 0 && <p className="text-gray-500 text-xs italic">No gainers today</p>}
                     {gainers.length > 5 && (
                       <button onClick={() => setExpandedSections(s => ({ ...s, gainers: !s.gainers }))} className="text-xs text-indigo-400 hover:text-indigo-300 mt-1">
-                        {showAll ? "Show less" : `Show all ${gainers.length}`}
+                        {showAll ? "Show less" : "Show more"}
                       </button>
                     )}
                   </div>
@@ -482,7 +482,7 @@ export default function Home() {
             {(() => {
               const losers = assets.filter(a => a.daily_change_pct != null && a.daily_change_pct! < 0).sort((a, b) => (a.daily_change_pct || 0) - (b.daily_change_pct || 0));
               const showAll = expandedSections["losers"];
-              const visible = showAll ? losers : losers.slice(0, 5);
+              const visible = showAll ? losers.slice(0, 15) : losers.slice(0, 5);
               return (
                 <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
                   <h3 className="text-sm font-semibold text-red-400 uppercase tracking-widest mb-3">Daily Losers ({losers.length})</h3>
@@ -500,7 +500,7 @@ export default function Home() {
                     {losers.length === 0 && <p className="text-gray-500 text-xs italic">No losers today</p>}
                     {losers.length > 5 && (
                       <button onClick={() => setExpandedSections(s => ({ ...s, losers: !s.losers }))} className="text-xs text-indigo-400 hover:text-indigo-300 mt-1">
-                        {showAll ? "Show less" : `Show all ${losers.length}`}
+                        {showAll ? "Show less" : "Show more"}
                       </button>
                     )}
                   </div>
