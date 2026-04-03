@@ -16,7 +16,8 @@ router = APIRouter(tags=["cron"])
 @router.get("/cron/refresh-prices")
 def cron_refresh_prices(authorization: Optional[str] = Header(None)):
     """Cron-triggered price refresh. Secured by CRON_SECRET env var."""
-    from ..main import _run_price_refresh, compute_and_store_rsi, get_db, IS_SERVERLESS
+    from ..main import _run_price_refresh, compute_and_store_rsi, IS_SERVERLESS
+    from ..deps import get_db
 
     cron_secret = os.environ.get("CRON_SECRET", "")
     if cron_secret:

@@ -4,15 +4,14 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 from ..auth import get_current_user
+from ..deps import get_db
 
 router = APIRouter(tags=["analytics"])
 
 
 @router.get("/analytics/theme-baskets")
-def theme_baskets(period: str = "1y", user_id: str = Depends(get_current_user)):
+def theme_baskets(period: str = "1y", db=Depends(get_db), user_id: str = Depends(get_current_user)):
     """Compare theme basket performance. Each basket starts at $10,000."""
-    from ..main import get_db
-    db = get_db()
 
     now = datetime.utcnow()
     if period == "ytd":
