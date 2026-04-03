@@ -3,10 +3,11 @@
 import { useEffect, useState, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import PositionTable from "../../components/PositionTable";
-import { PortfolioSnapshot, Trade, Asset, ThemeLists } from "../types";
+import { Trade } from "../types";
 import { useToast } from "../../components/Toast";
 import { apiCall } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
+import { usePortfolio } from "../../lib/PortfolioContext";
 import { useEscape, useCmdK } from "../../components/useKeyboard";
 import { SkeletonTable } from "../../components/Skeleton";
 
@@ -14,24 +15,19 @@ type TabType = "positions" | "trades" | "assets";
 
 function PortfolioContent() {
   const { user } = useAuth();
+  const { positions, assets, loading: posLoading, themes, refresh } = usePortfolio();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
   const tickerParam = searchParams.get("ticker");
   const initialTab: TabType = tabParam === "trades" ? "trades" : tabParam === "assets" ? "assets" : "positions";
   const [tab, setTab] = useState<TabType>(initialTab);
 
-  // Positions
-  const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
-  const [posLoading, setPosLoading] = useState(true);
-
-  // Trades
+  // Trades (lazy-loaded, page-specific)
   const [trades, setTrades] = useState<Trade[]>([]);
   const [tradeLoading, setTradeLoading] = useState(true);
 
-  // Assets
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [themes, setThemes] = useState<ThemeLists>({ primary: [], secondary: [] });
-  const [assetLoading, setAssetLoading] = useState(true);
+  // Asset filters (local UI state)
+  const assetLoading = posLoading;
   const [assetFilter, setAssetFilter] = useState("");
   const [primaryFilter, setPrimaryFilter] = useState("");
   const [secondaryFilter, setSecondaryFilter] = useState("");
@@ -79,32 +75,7 @@ function PortfolioContent() {
 
   useEscape(detailTicker ? () => setDetailTicker(null) : editingTrade ? () => setEditingTrade(null) : null);
 
-  // Fetch positions + assets on mount (lightweight)
-  useEffect(() => {
-    if (!user) return;
-    apiCall("/api/portfolio")
-      .then(async (r) => { if (r.ok) setPositions(await r.json()); })
-      .catch(console.error)
-      .finally(() => setPosLoading(false));
-
-    apiCall("/api/assets")
-      .then(async (r) => {
-        if (r.ok) {
-          const data = await r.json();
-          setAssets(data);
-          // Derive unique themes client-side — eliminates /api/assets/themes call
-          const primary = new Set<string>();
-          const secondary = new Set<string>();
-          data.forEach((a: any) => {
-            if (a.primary_theme) primary.add(a.primary_theme);
-            if (a.secondary_theme) secondary.add(a.secondary_theme);
-          });
-          setThemes({ primary: [...primary].sort(), secondary: [...secondary].sort() });
-        }
-      })
-      .catch(console.error)
-      .finally(() => setAssetLoading(false));
-  }, [user]);
+  // Positions + assets come from PortfolioContext (shared, fetched once)
 
   // Lazy-load trades only when Trades tab is active (expensive — streams all trades)
   useEffect(() => {
@@ -404,7 +375,7 @@ function PortfolioContent() {
                             try {
                               const res = await apiCall(`/api/assets/${a.ticker}`, { method: "DELETE" });
                               if (res.ok) {
-                                setAssets(assets.filter(x => x.ticker !== a.ticker));
+                                refresh();
                                 toast.success(`${a.ticker} removed`);
                               } else toast.error("Failed to remove");
                             } catch { toast.error("Error removing asset"); }
@@ -465,7 +436,7 @@ function PortfolioContent() {
                                 if (!confirm(`Remove "${asset.ticker}" from asset list?\n\nTrade history will be preserved.`)) return;
                                 try {
                                   const res = await apiCall(`/api/assets/${asset.ticker}`, { method: "DELETE" });
-                                  if (res.ok) setAssets(assets.filter(a => a.ticker !== asset.ticker));
+                                  if (res.ok) refresh();
                                   else toast.error("Failed to remove asset.");
                                 } catch { toast.error("Error removing asset."); }
                               }}

@@ -1,9 +1,8 @@
 "use client";
-import { useState, useEffect } from "react";
-import { Asset, ThemeLists } from "../app/types";
+import { useState } from "react";
 import { useToast } from "./Toast";
 import { apiCall } from "../lib/api";
-import { useAuth } from "../lib/AuthContext";
+import { usePortfolio } from "../lib/PortfolioContext";
 
 interface ManualTradeFormProps {
   onTradeAdded: () => void;
@@ -22,35 +21,13 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
   });
   const [loading, setLoading] = useState(false);
 
-  // Asset registration state
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [themes, setThemes] = useState<ThemeLists>({ primary: [], secondary: [] });
+  // Assets and themes from shared context (no separate fetch)
+  const { assets, themes } = usePortfolio();
   const [tickerStatus, setTickerStatus] = useState<"idle" | "registered" | "unregistered">("idle");
   const [showRegister, setShowRegister] = useState(false);
   const [regForm, setRegForm] = useState({ primary_theme: "", secondary_theme: "", price: "" });
   const [regLoading, setRegLoading] = useState(false);
-  const { user } = useAuth();
   const toast = useToast();
-
-  // Fetch assets when auth is ready, derive themes client-side
-  useEffect(() => {
-    if (!user) return;
-    apiCall("/api/assets")
-      .then(async (r) => {
-        if (r.ok) {
-          const data = await r.json();
-          setAssets(data);
-          const primary = new Set<string>();
-          const secondary = new Set<string>();
-          data.forEach((a: any) => {
-            if (a.primary_theme) primary.add(a.primary_theme);
-            if (a.secondary_theme) secondary.add(a.secondary_theme);
-          });
-          setThemes({ primary: [...primary].sort(), secondary: [...secondary].sort() });
-        }
-      })
-      .catch(console.error);
-  }, [user]);
 
   // Check ticker when it changes
   const checkTicker = (ticker: string) => {
@@ -93,8 +70,6 @@ const ManualTradeForm: React.FC<ManualTradeFormProps> = ({ onTradeAdded }) => {
         }),
       });
       if (res.ok) {
-        const newAsset = await res.json();
-        setAssets([...assets, newAsset]);
         setTickerStatus("registered");
         setShowRegister(false);
         setRegForm({ primary_theme: "", secondary_theme: "", price: "" });

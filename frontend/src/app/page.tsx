@@ -1,25 +1,21 @@
 "use client";
 
-import { useEffect, useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import ManualTradeForm from '../components/ManualTradeForm';
 import ThemeAnalysis from '../components/ThemeAnalysis';
 import PortfolioChart from '../components/PortfolioChart';
-import { PortfolioSnapshot, ThemeLists, Asset, Trade } from './types';
+import { ThemeLists } from './types';
 import { useToast } from '../components/Toast';
 import { apiCall } from "../lib/api";
-import { useAuth } from "../lib/AuthContext";
+import { usePortfolio } from "../lib/PortfolioContext";
 import { useCmdK, useEscape } from '../components/useKeyboard';
 
 export default function Home() {
-  const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [recentTrades, setRecentTrades] = useState<Trade[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { positions, assets, recentTrades, loading, refresh, activePositions, themes: derivedThemes } = usePortfolio();
   const [showManualTrade, setShowManualTrade] = useState(false);
   const [pnlView, setPnlView] = useState<'ytd' | 'all'>('ytd');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
 
-  const { user } = useAuth();
   const toast = useToast();
   useCmdK();
   useEscape(showManualTrade ? () => setShowManualTrade(false) : null);
@@ -34,30 +30,6 @@ export default function Home() {
   const [themes, setThemes] = useState<ThemeLists>({ primary: [], secondary: [] });
   const [fixForms, setFixForms] = useState<Record<string, { primary: string; secondary: string }>>({});
   const [savingTicker, setSavingTicker] = useState<string | null>(null);
-
-  const fetchPortfolio = async () => {
-    setLoading(true);
-    try {
-      const res = await apiCall('/api/portfolio');
-      if (res.ok) {
-        const data = await res.json();
-        setPositions(data);
-      } else {
-        console.warn('Failed to fetch portfolio');
-      }
-    } catch (error) {
-      console.error('Error fetching portfolio:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!user) return;
-    fetchPortfolio();
-    apiCall("/api/assets").then(async r => { if (r.ok) setAssets(await r.json()); }).catch(console.error);
-    apiCall("/api/trades?limit=5").then(async r => { if (r.ok) setRecentTrades(await r.json()); }).catch(console.error);
-  }, [user]);
 
   const totalMarketValue = positions.reduce((acc, pos) => acc + pos.market_value, 0);
   const totalUnrealized = positions.reduce((acc, pos) => acc + pos.unrealized_pnl, 0);
@@ -74,7 +46,7 @@ export default function Home() {
   const displayTotalPnl = pnlView === 'ytd' ? totalPnLYtd : totalPnL;
   const displayPnlPct = totalCostBasis > 0 ? (displayTotalPnl / totalCostBasis) * 100 : 0;
 
-  const activePositions = useMemo(() => positions.filter(p => p.quantity > 0), [positions]);
+  // activePositions comes from usePortfolio() context
   const unassignedPositions = useMemo(
     () => activePositions.filter(p => !p.primary_theme || !p.secondary_theme),
     [activePositions]
@@ -86,14 +58,7 @@ export default function Home() {
       setShowMissing(false);
       return;
     }
-    // Derive themes from already-loaded assets instead of a separate API call
-    const primary = new Set<string>();
-    const secondary = new Set<string>();
-    assets.forEach(a => {
-      if (a.primary_theme) primary.add(a.primary_theme);
-      if (a.secondary_theme) secondary.add(a.secondary_theme);
-    });
-    setThemes({ primary: [...primary].sort(), secondary: [...secondary].sort() });
+    setThemes(derivedThemes);
     // Init fix forms for each unassigned ticker
     const forms: Record<string, { primary: string; secondary: string }> = {};
     unassignedPositions.forEach(p => {
@@ -135,7 +100,7 @@ export default function Home() {
         const newForms = { ...fixForms };
         delete newForms[ticker];
         setFixForms(newForms);
-        fetchPortfolio();
+        refresh();
       } else {
         toast.error('Failed to save themes.');
       }
@@ -341,11 +306,9 @@ export default function Home() {
                 <button onClick={() => setShowManualTrade(false)} className="text-gray-400 hover:text-white text-xl px-2 hover:bg-gray-700 rounded">&times;</button>
               </div>
               <ManualTradeForm onTradeAdded={() => {
-                fetchPortfolio();
+                refresh();
                 setShowManualTrade(false);
                 toast.success("Trade added successfully");
-                // Refresh recent trades
-                apiCall("/api/trades?limit=5").then(async r => { if (r.ok) setRecentTrades(await r.json()); }).catch(console.error);
               }} />
             </div>
           </div>

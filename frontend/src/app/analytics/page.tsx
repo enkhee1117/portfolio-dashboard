@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { PortfolioSnapshot, ThemeBasketSeries } from "../types";
+import { ThemeBasketSeries } from "../types";
 import { apiCall } from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
+import { usePortfolio } from "../../lib/PortfolioContext";
 import {
   BarChart,
   Bar,
@@ -32,8 +33,7 @@ interface ThemeEntry {
 
 export default function AnalyticsPage() {
   const { user } = useAuth();
-  const [positions, setPositions] = useState<PortfolioSnapshot[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { positions, loading } = usePortfolio();
   const [selectedPrimary, setSelectedPrimary] = useState<string | null>(null);
   const [selectedSecondary, setSelectedSecondary] = useState<string | null>(null);
 
@@ -41,14 +41,6 @@ export default function AnalyticsPage() {
   const [basketPeriod, setBasketPeriod] = useState("1y");
   const [baskets, setBaskets] = useState<ThemeBasketSeries[]>([]);
   const [basketLoading, setBasketLoading] = useState(true);
-
-  useEffect(() => {
-    if (!user) return;
-    apiCall("/api/portfolio")
-      .then(async (r) => { if (r.ok) setPositions(await r.json()); })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [user]);
 
   useEffect(() => {
     if (!user) return;
