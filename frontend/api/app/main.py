@@ -644,9 +644,15 @@ def read_root():
 @app.post("/import")
 @limiter.limit("5/minute")
 async def import_excel(request: Request, file: UploadFile = File(...), skip_dedup: bool = False, db = Depends(get_db), user_id: str = Depends(get_current_user)):
+    # Limit upload size to 10MB
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Maximum 10MB.")
+    await file.seek(0)
+
     file_location = f"temp_{file.filename}"
     with open(file_location, "wb+") as file_object:
-        shutil.copyfileobj(file.file, file_object)
+        file_object.write(contents)
 
     try:
         result = importer.import_data(db, file_location, skip_dedup=skip_dedup, user_id=user_id)
@@ -1995,7 +2001,11 @@ async def restore_backup(request: Request, file: UploadFile = File(...), db=Depe
     """Restore user's trades and asset themes from a JSON backup file."""
     try:
         content = await file.read()
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Backup file too large. Maximum 10MB.")
         backup = json.loads(content)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid backup file: {e}")
 

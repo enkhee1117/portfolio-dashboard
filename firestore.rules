@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // All data access goes through the backend (Firebase Admin SDK).
+    // The Admin SDK bypasses these rules entirely.
+    // These rules ONLY restrict the client-side Firebase SDK.
+
+    // Trades: only the backend writes trades (via Admin SDK)
+    // Client SDK should never directly read/write trades
+    match /trades/{tradeId} {
+      allow read, write: if false;
+    }
+
+    // Shared price data: read-only for authenticated users, write-only by backend
+    match /asset_prices/{ticker} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    match /price_series/{ticker} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    match /price_history/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // User-scoped data: only the owning user can read (via backend)
+    match /users/{userId}/{document=**} {
+      allow read, write: if false;  // All access via Admin SDK
+    }
+
+    // Portfolio snapshots (global, legacy)
+    match /portfolio_snapshots/{docId} {
+      allow read, write: if false;
+    }
+
+    // Default: deny everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
